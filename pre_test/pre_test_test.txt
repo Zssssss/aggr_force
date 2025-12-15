@@ -1,0 +1,1 @@
+Hello from WSL! 这是一个通过 MCP 协议读取的测试文件。
