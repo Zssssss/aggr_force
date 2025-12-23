@@ -1,0 +1,30 @@
+{
+  "name": "screenshot-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP服务器 - 提供跨平台截屏功能",
+  "main": "screenshot_mcp_server.py",
+  "scripts": {
+    "start": "python screenshot_mcp_server.py",
+    "test": "python screenshot_tools.py"
+  },
+  "keywords": [
+    "mcp",
+    "screenshot",
+    "screen-capture",
+    "cross-platform"
+  ],
+  "author": "zsss",
+  "license": "MIT",
+  "dependencies": {
+    "mcp": ">=1.0.0",
+    "pillow": ">=10.0.0",
+    "mss": ">=9.0.0"
+  },
+  "python": {
+    "requires": ">=3.8"
+  },
+  "repository": {
+    "type": "local",
+    "directory": "/home/zsss/zsss_useful_tools/aggr_force/screenshot_mcp"
+  }
+}

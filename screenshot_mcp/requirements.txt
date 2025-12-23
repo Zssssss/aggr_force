@@ -1,0 +1,13 @@
+# Screenshot MCP Server 依赖包
+
+# MCP核心库
+mcp>=1.0.0
+
+# 图像处理
+Pillow>=10.0.0
+
+# 跨平台截图库
+mss>=9.0.0
+
+# 异步IO支持
+asyncio-compat>=0.1.0

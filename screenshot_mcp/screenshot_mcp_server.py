@@ -1,0 +1,197 @@
+#!/usr/bin/env python3
+"""Screenshot MCP Server - 提供截屏功能的MCP服务器"""
+
+import asyncio
+import json
+import sys
+from typing import Any, Optional
+from pathlib import Path
+
+# 添加父目录到路径以便导入
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from mcp.server.models import InitializationOptions
+from mcp.server import NotificationOptions, Server
+from mcp.server.stdio import stdio_server
+from mcp.types import (
+    Tool,
+    TextContent,
+    ImageContent,
+    EmbeddedResource,
+)
+
+from screenshot_mcp.screenshot_tools import ScreenshotTool
+
+
+# 创建MCP服务器实例
+app = Server("screenshot-mcp-server")
+
+# 全局截屏工具实例
+screenshot_tool: Optional[ScreenshotTool] = None
+
+
+@app.list_tools()
+async def handle_list_tools() -> list[Tool]:
+    """列出所有可用的工具"""
+    return [
+        Tool(
+            name="take_screenshot",
+            description="截取当前全屏并保存为PNG图片文件。支持Windows、Linux和macOS系统。在WSL环境下会自动调用Windows的截图功能。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "自定义截图文件名（不含路径），如果不提供则自动生成时间戳文件名。例如: 'my_screenshot.png'",
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "截图保存目录的绝对路径，如果不提供则保存到screenshot_mcp目录下",
+                    },
+                    "return_base64": {
+                        "type": "boolean",
+                        "description": "是否返回图片的base64编码数据，默认为false",
+                        "default": False,
+                    }
+                },
+                "required": [],
+            },
+        ),
+        Tool(
+            name="get_screenshot_info",
+            description="获取最近一次截图的详细信息，包括文件路径、尺寸、格式等",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        ),
+    ]
+
+
+@app.call_tool()
+async def handle_call_tool(name: str, arguments: dict) -> list[TextContent | ImageContent | EmbeddedResource]:
+    """处理工具调用"""
+    global screenshot_tool
+    
+    if name == "take_screenshot":
+        # 获取参数
+        filename = arguments.get("filename")
+        output_dir = arguments.get("output_dir")
+        return_base64 = arguments.get("return_base64", False)
+        
+        # 创建截屏工具实例
+        screenshot_tool = ScreenshotTool(output_dir)
+        
+        # 执行截图
+        if return_base64:
+            result = screenshot_tool.take_screenshot_base64(filename)
+        else:
+            result = screenshot_tool.take_screenshot(filename)
+        
+        # 构建响应
+        if result.get("success"):
+            response_text = f"""✅ 截图成功！
+
+📁 文件信息:
+  - 文件名: {result['filename']}
+  - 完整路径: {result['filepath']}
+  - 文件格式: {result['format']}
+  
+📐 图片尺寸:
+  - 宽度: {result['width']} 像素
+  - 高度: {result['height']} 像素
+  - 颜色模式: {result['mode']}
+  
+🔧 截图方法: {result.get('method', 'unknown')}
+"""
+            
+            if return_base64:
+                response_text += f"\n📦 数据大小: {result.get('size_bytes', 0)} 字节"
+                response_text += f"\n🔐 Base64数据已生成（长度: {len(result.get('base64', ''))} 字符）"
+            
+            return [TextContent(type="text", text=response_text)]
+        else:
+            error_text = f"""❌ 截图失败！
+
+错误信息: {result.get('error', '未知错误')}
+操作系统: {result.get('system', '未知')}
+
+💡 提示:
+- 在WSL环境下，请确保Windows系统可以正常截图
+- 在Linux环境下，可能需要安装 mss 库: pip install mss
+- 或者安装 scrot 命令: sudo apt install scrot
+- 确保有图形界面环境（DISPLAY环境变量已设置）
+"""
+            return [TextContent(type="text", text=error_text)]
+    
+    elif name == "get_screenshot_info":
+        if screenshot_tool is None:
+            return [TextContent(
+                type="text",
+                text="⚠️ 还没有进行过截图操作，请先使用 take_screenshot 工具进行截图。"
+            )]
+        
+        # 获取最新的截图文件
+        screenshots = list(screenshot_tool.output_dir.glob("screenshot_*.png"))
+        if not screenshots:
+            return [TextContent(
+                type="text",
+                text="⚠️ 未找到任何截图文件。"
+            )]
+        
+        latest_screenshot = max(screenshots, key=lambda p: p.stat().st_mtime)
+        
+        try:
+            from PIL import Image
+            with Image.open(latest_screenshot) as img:
+                info_text = f"""📸 最新截图信息:
+
+📁 文件信息:
+  - 文件名: {latest_screenshot.name}
+  - 完整路径: {latest_screenshot.absolute()}
+  - 文件大小: {latest_screenshot.stat().st_size} 字节
+  - 文件格式: {img.format}
+  
+📐 图片尺寸:
+  - 宽度: {img.size[0]} 像素
+  - 高度: {img.size[1]} 像素
+  - 颜色模式: {img.mode}
+  
+🕐 创建时间: {datetime.datetime.fromtimestamp(latest_screenshot.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')}
+"""
+                return [TextContent(type="text", text=info_text)]
+        except Exception as e:
+            return [TextContent(
+                type="text",
+                text=f"❌ 读取截图信息失败: {str(e)}"
+            )]
+    
+    else:
+        return [TextContent(
+            type="text",
+            text=f"❌ 未知的工具: {name}"
+        )]
+
+
+async def main():
+    """主函数"""
+    # 使用stdio传输运行服务器
+    async with stdio_server() as (read_stream, write_stream):
+        await app.run(
+            read_stream,
+            write_stream,
+            InitializationOptions(
+                server_name="screenshot-mcp-server",
+                server_version="1.0.0",
+                capabilities=app.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
+            ),
+        )
+
+
+if __name__ == "__main__":
+    import datetime
+    asyncio.run(main())

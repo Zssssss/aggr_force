@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import sys
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 from .human_op_tools import HumanOpTools
@@ -175,15 +176,18 @@ async def main():
     """
     MCP 服务器主函数。
     """
-    # 从 stdin/stdout 读取
-    import sys
-    
     server = create_server()
     
-    # 运行服务器
+    # 运行服务器 - 使用 create_async_buffered_reader 处理 stdin
+    from mcp.server.stdio import create_async_buffered_reader
+    
+    read_stream = create_async_buffered_reader(sys.stdin.buffer)
+    write_stream = sys.stdout.buffer
+    
     await server.run(
-        read_stream=sys.stdin.buffer,
-        write_stream=sys.stdout.buffer,
+        read_stream=read_stream,
+        write_stream=write_stream,
+        initialization_options={}
     )
 
 

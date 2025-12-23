@@ -73,12 +73,16 @@ class HumanOpTools:
             dict: 操作结果
         """
         try:
+            # 记录初始位置
+            from_pos = self.simulation_state["mouse_position"]
+            
+            # 更新目标位置
             self.simulation_state["mouse_position"] = (x, y)
             
             return {
                 "success": True,
                 "action": "mouse move",
-                "from": self.simulation_state["mouse_position"],
+                "from": from_pos,
                 "to": (x, y),
                 "duration": duration,
                 "state": self.simulation_state
