@@ -1,5 +1,4 @@
 """截屏工具模块 - 提供跨平台截屏功能
-直接使用screen_op目录下已验证的截图代码
 """
 
 import datetime
@@ -23,16 +22,19 @@ class ScreenshotTool:
         Args:
             output_dir: 截图保存目录，默认为当前模块所在目录
         """
+        # 获取当前模块的绝对路径
+        module_dir = Path(__file__).resolve().parent
+        
         if output_dir is None:
-            self.output_dir = Path(__file__).parent
+            self.output_dir = module_dir
         else:
-            self.output_dir = Path(output_dir)
+            self.output_dir = Path(output_dir).resolve()
         
         # 确保输出目录存在
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # screen_op目录路径
-        self.screen_op_dir = Path(__file__).parent.parent / "screen_op"
+        # PowerShell脚本路径（使用绝对路径）
+        self.ps_script_path = module_dir / "take_screenshot.ps1"
         
     def take_screenshot(self, filename: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -85,8 +87,8 @@ class ScreenshotTool:
     
     def _take_screenshot_from_screen_op(self, filepath: Path) -> Dict[str, Any]:
         """
-        使用screen_op目录中的截图方法
-        参考: screen_op/take_screenshot.py 和 take_screenshot.ps1
+        跨平台截图方法
+        整合自screen_op/take_screenshot.py和take_screenshot.ps1
         """
         system = platform.system()
         
@@ -103,26 +105,23 @@ class ScreenshotTool:
         
         # WSL环境：使用PowerShell脚本
         if is_wsl:
-            ps_script = self.screen_op_dir / "take_screenshot.ps1"
-            if not ps_script.exists():
-                raise RuntimeError(f"找不到PowerShell脚本: {ps_script}")
+            if not self.ps_script_path.exists():
+                raise RuntimeError(f"找不到PowerShell脚本: {self.ps_script_path}")
             
-            # 转换WSL路径到Windows路径
-            wsl_output_dir = str(self.output_dir.absolute())
-            
-            # 在screen_op目录执行PowerShell脚本
+            # 在当前目录执行PowerShell脚本
+            script_dir = self.ps_script_path.parent
             result = subprocess.run(
-                ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", str(ps_script)],
+                ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", str(self.ps_script_path)],
                 capture_output=True,
                 text=True,
-                cwd=str(self.screen_op_dir)
+                cwd=str(script_dir)
             )
             
             if result.returncode != 0:
                 raise RuntimeError(f"PowerShell截图失败: {result.stderr}")
             
-            # 查找screen_op目录中生成的截图文件
-            screenshots = list(self.screen_op_dir.glob("screenshot_*.png"))
+            # 查找当前目录中生成的截图文件
+            screenshots = list(script_dir.glob("screenshot_*.png"))
             if not screenshots:
                 raise RuntimeError("PowerShell脚本执行成功但未找到截图文件")
             
