@@ -1,0 +1,19 @@
+# MCP 核心依赖
+mcp>=0.1.0
+
+# 图像处理 (用于某些平台的鼠标位置获取)
+Pillow>=10.0.0
+
+# 可选依赖 - 根据平台选择安装
+
+# 跨平台鼠标控制 (推荐)
+# pyautogui>=0.9.54
+
+# 跨平台输入监控
+# pynput>=1.7.6
+
+# Windows 特定
+# pywin32>=306
+
+# macOS 特定
+# pyobjc-framework-Quartz>=10.0

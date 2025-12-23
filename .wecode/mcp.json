@@ -1,12 +1,1 @@
-{"mcpServers":
-  { "screenshot": {
-    "command": "python3",
-    "args": ["/home/zsss/zsss_useful_tools/aggr_force/screenshot_mcp/screenshot_mcp_server.py"]
-    }
-    ,
-    "open-dingtalk": {
-        "command": "python3",
-        "args": ["/home/zsss/zsss_useful_tools/aggr_force/open_dingtalk_mcp/open_dingtalk_mcp_server.py"]
-    }
-  }
-}
+{"mcpServers":{"screenshot":{"command":"python3","args":["/home/zsss/zsss_useful_tools/aggr_force/screenshot_mcp/screenshot_mcp_server.py"],"alwaysAllow":["take_screenshot","get_screenshot_info"]},"open-dingtalk":{"command":"python3","args":["/home/zsss/zsss_useful_tools/aggr_force/open_dingtalk_mcp/open_dingtalk_mcp_server.py"],"alwaysAllow":["open_dingtalk"]},"mouse-position":{"command":"python3","args":["/home/zsss/zsss_useful_tools/aggr_force/get_mouse_position_mcp/mouse_position_mcp_server.py"],"alwaysAllow":["get_mouse_position"]}}}
