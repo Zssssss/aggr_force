@@ -1,4 +1,12 @@
-{"mcpServers":{ "screenshot": {
+{"mcpServers":
+  { "screenshot": {
     "command": "python3",
     "args": ["/home/zsss/zsss_useful_tools/aggr_force/screenshot_mcp/screenshot_mcp_server.py"]
-  }}}
+    }
+    ,
+    "open-dingtalk": {
+        "command": "python3",
+        "args": ["/home/zsss/zsss_useful_tools/aggr_force/open_dingtalk_mcp/open_dingtalk_mcp_server.py"]
+    }
+  }
+}
