@@ -6,6 +6,7 @@ import os
 import sys
 import subprocess
 import base64
+import platform
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional, List
 import json
@@ -23,6 +24,19 @@ class MouseMoveTools:
         self.screenshot_dir.mkdir(exist_ok=True)
         self.last_screenshot_path = None
         self.last_screenshot_base64 = None
+        self.is_wsl = self._check_wsl()
+    
+    def _check_wsl(self) -> bool:
+        """检查是否在WSL环境中"""
+        if platform.system() != "Linux":
+            return False
+        
+        try:
+            with open("/proc/version", "r") as f:
+                version_info = f.read().lower()
+                return "microsoft" in version_info or "wsl" in version_info
+        except:
+            return False
     
     def get_current_mouse_position(self) -> Dict[str, Any]:
         """
@@ -53,8 +67,35 @@ class MouseMoveTools:
         """
         try:
             # 检测操作系统
-            if sys.platform.startswith('linux'):
-                # Linux系统使用xdotool
+            if self.is_wsl:
+                # WSL环境：使用PowerShell移动Windows鼠标
+                ps_script = f'''
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point({x}, {y})
+'''
+                result = subprocess.run(
+                    ['powershell.exe', '-Command', ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                if result.returncode == 0:
+                    return {
+                        "success": True,
+                        "x": x,
+                        "y": y,
+                        "method": "powershell_wsl",
+                        "message": f"鼠标已移动到位置 ({x}, {y})"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"移动鼠标失败: {result.stderr}"
+                    }
+            
+            elif sys.platform.startswith('linux'):
+                # 原生Linux系统使用xdotool
                 result = subprocess.run(
                     ['xdotool', 'mousemove', str(x), str(y)],
                     capture_output=True,
@@ -67,6 +108,7 @@ class MouseMoveTools:
                         "success": True,
                         "x": x,
                         "y": y,
+                        "method": "xdotool",
                         "message": f"鼠标已移动到位置 ({x}, {y})"
                     }
                 else:
