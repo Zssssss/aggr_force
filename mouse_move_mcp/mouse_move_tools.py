@@ -12,7 +12,7 @@ import json
 
 # 导入鼠标位置工具
 sys.path.append(str(Path(__file__).parent.parent / "get_mouse_position_mcp"))
-from mouse_position_tools import get_mouse_position
+from mouse_position_tools import get_mouse_position_simple as get_mouse_position
 
 
 class MouseMoveTools:
