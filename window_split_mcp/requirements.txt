@@ -1,0 +1,12 @@
+# Window Split MCP 依赖包
+
+# MCP SDK - 核心依赖
+mcp>=0.1.0
+
+# 图像处理（用于某些平台的屏幕信息获取）
+Pillow>=10.0.0
+
+# 注意：Linux系统还需要安装系统级工具：
+# - wmctrl: sudo apt install wmctrl
+# - xdotool: sudo apt install xdotool
+# - xdpyinfo: sudo apt install x11-utils
