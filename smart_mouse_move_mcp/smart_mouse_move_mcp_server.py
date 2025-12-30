@@ -35,8 +35,15 @@ logger = logging.getLogger("smart-mouse-move-mcp")
 # 创建MCP服务器实例
 app = Server("smart-mouse-move")
 
-# 创建工具实例
-tools = SmartMouseMoveTools()
+# 延迟创建工具实例，避免在模块导入时初始化
+tools = None
+
+def get_tools():
+    """获取或创建工具实例"""
+    global tools
+    if tools is None:
+        tools = SmartMouseMoveTools()
+    return tools
 
 
 @app.list_tools()
@@ -111,13 +118,16 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | ImageContent | EmbeddedResource]:
     """处理工具调用"""
     try:
+        # 获取工具实例
+        tool_instance = get_tools()
+        
         if name == "smart_move_to_target":
             # 开始智能移动工作流
             target_description = arguments.get("target_description")
             max_attempts = arguments.get("max_attempts")
             tolerance = arguments.get("tolerance")
             
-            result = tools.smart_move_to_target(
+            result = tool_instance.smart_move_to_target(
                 target_description=target_description,
                 max_attempts=max_attempts,
                 tolerance=tolerance
@@ -168,7 +178,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | ImageCo
             tolerance = arguments.get("tolerance")
             verify = arguments.get("verify", True)
             
-            result = tools.execute_move_to_coordinates(
+            result = tool_instance.execute_move_to_coordinates(
                 target_x=target_x,
                 target_y=target_y,
                 tolerance=tolerance,

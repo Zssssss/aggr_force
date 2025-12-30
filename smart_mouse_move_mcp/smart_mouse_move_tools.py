@@ -1,12 +1,18 @@
 """
 智能鼠标移动工具
-封装完整的工作流程：截屏 -> 分析 -> 移动 -> 验证
+封装完整的工作流程:截屏 -> 分析 -> 移动 -> 验证
 复用已有的 screenshot_mcp 和 mouse_move_mcp 工具
 """
 import sys
 import time
+import subprocess
+import platform
+import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
+
+# 配置日志，避免使用print输出到stdout干扰MCP协议
+logger = logging.getLogger("smart-mouse-move-tools")
 
 # 导入已有的工具
 sys.path.append(str(Path(__file__).parent.parent / "screenshot_mcp"))
@@ -32,6 +38,130 @@ class SmartMouseMoveTools:
         
         self.max_attempts = 5  # 最大尝试次数
         self.tolerance = 10  # 位置容差（像素）
+        
+        # 检查是否在WSL环境
+        self.is_wsl = self._check_wsl()
+        
+        # 获取DPI缩放信息
+        self.dpi_scale = self._get_dpi_scale()
+    
+    def _check_wsl(self) -> bool:
+        """检查是否在WSL环境"""
+        if platform.system() != "Linux":
+            return False
+        try:
+            with open("/proc/version", "r") as f:
+                return "microsoft" in f.read().lower() or "wsl" in f.read().lower()
+        except:
+            return False
+    
+    def _convert_wsl_path_to_windows(self, wsl_path: str) -> str:
+        """
+        将WSL路径转换为Windows路径
+        
+        Args:
+            wsl_path: WSL格式的路径
+            
+        Returns:
+            Windows格式的路径
+        """
+        try:
+            result = subprocess.run(
+                ["wslpath", "-w", wsl_path],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception as e:
+            logger.debug(f"路径转换失败: {e}")
+        return wsl_path
+    
+    def _get_dpi_scale(self) -> Tuple[float, float]:
+        """
+        获取DPI缩放比例
+        
+        Returns:
+            (scale_x, scale_y) 缩放比例元组
+        """
+        if not self.is_wsl and platform.system() != "Windows":
+            return (1.0, 1.0)
+        
+        try:
+            # 检查是否有预先准备的PowerShell脚本文件
+            script_path = Path(__file__).parent / "get_dpi_info.ps1"
+            
+            if script_path.exists():
+                # 在WSL环境下，需要转换路径
+                if self.is_wsl:
+                    windows_script_path = self._convert_wsl_path_to_windows(str(script_path))
+                else:
+                    windows_script_path = str(script_path)
+                
+                # 使用脚本文件方式执行，更稳定
+                # 在WSL中不使用creationflags参数
+                cmd = ["powershell.exe", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", windows_script_path]
+                
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=15  # 增加超时时间到15秒
+                )
+            else:
+                # 使用简化的内联命令，避免复杂的C#代码导致超时
+                ps_script = 'Write-Output "96,96"'
+                
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                output = result.stdout.strip()
+                # 处理可能的多行输出，只取最后一行
+                lines = output.split('\n')
+                for line in reversed(lines):
+                    line = line.strip()
+                    if ',' in line and not line.startswith('#'):
+                        try:
+                            dpi_x, dpi_y = map(int, line.split(','))
+                            scale_x = dpi_x / 96.0
+                            scale_y = dpi_y / 96.0
+                            logger.debug(f"DPI信息: {dpi_x}x{dpi_y}, 缩放比例: {scale_x}x{scale_y}")
+                            return (scale_x, scale_y)
+                        except ValueError:
+                            continue
+                logger.debug(f"解析DPI输出失败: {output}")
+        except subprocess.TimeoutExpired:
+            logger.debug("获取DPI信息超时，使用默认缩放1.0")
+        except Exception as e:
+            logger.debug(f"获取DPI信息失败: {e}, 使用默认缩放1.0")
+        
+        return (1.0, 1.0)
+    
+    def _get_monitor_info(self) -> Dict[str, Any]:
+        """
+        获取显示器信息
+        
+        Returns:
+            包含显示器信息的字典
+        """
+        try:
+            monitors = self.screenshot_tool.get_monitors_info()
+            return {
+                "success": True,
+                "monitors": monitors,
+                "count": len(monitors)
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
         
     def _take_screenshot(self, filename: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -62,7 +192,7 @@ class SmartMouseMoveTools:
                 return (result["x"], result["y"])
             return None
         except Exception as e:
-            print(f"获取鼠标位置失败: {str(e)}")
+            logger.error(f"获取鼠标位置失败: {str(e)}")
             return None
     
     def _move_mouse(self, x: int, y: int) -> bool:
@@ -80,7 +210,7 @@ class SmartMouseMoveTools:
             result = self.mouse_tool.move_mouse_to_position(x, y)
             return result.get("success", False)
         except Exception as e:
-            print(f"移动鼠标失败: {str(e)}")
+            logger.error(f"移动鼠标失败: {str(e)}")
             return False
     
     def _calculate_distance(self, x1: int, y1: int, x2: int, y2: int) -> float:
@@ -138,6 +268,8 @@ class SmartMouseMoveTools:
         
         filepath = screenshot_result["filepath"]
         image_base64 = screenshot_result.get("base64")
+        screenshot_width = screenshot_result.get("width", 0)
+        screenshot_height = screenshot_result.get("height", 0)
         
         # 获取当前鼠标位置
         current_pos = self._get_mouse_position()
@@ -149,20 +281,35 @@ class SmartMouseMoveTools:
                 "step": "get_position"
             }
         
+        # 获取显示器信息
+        monitor_info = self._get_monitor_info()
+        
         return {
             "success": True,
             "step": "ready_for_analysis",
             "message": "截图已准备好，请AI分析图片并提供目标坐标",
             "screenshot_path": filepath,
             "screenshot_base64": image_base64,
+            "screenshot_size": {
+                "width": screenshot_width,
+                "height": screenshot_height
+            },
             "current_mouse_position": {
                 "x": current_pos[0],
                 "y": current_pos[1]
             },
+            "dpi_scale": {
+                "x": self.dpi_scale[0],
+                "y": self.dpi_scale[1]
+            },
+            "monitor_info": monitor_info,
             "target_description": target_description,
             "instructions": (
-                "请分析截图，找到目标位置的坐标，然后调用 "
-                "execute_move_to_coordinates 工具来移动鼠标"
+                "请分析截图，找到目标位置的坐标。\n"
+                f"截图尺寸: {screenshot_width}x{screenshot_height}\n"
+                f"DPI缩放: {self.dpi_scale[0]}x (X), {self.dpi_scale[1]}x (Y)\n"
+                "注意: 截图坐标就是Windows原生坐标，无需转换。\n"
+                "然后调用 execute_move_to_coordinates 工具来移动鼠标"
             )
         }
     
