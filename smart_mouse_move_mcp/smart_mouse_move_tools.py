@@ -252,66 +252,6 @@ class SmartMouseMoveTools:
                 "suggestion": "请重新截图并尝试移动"
             }
     
-    def verify_position_with_screenshot(
-        self,
-        expected_x: int,
-        expected_y: int,
-        tolerance: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        截图并验证当前鼠标位置
-        
-        Args:
-            expected_x: 期望的X坐标
-            expected_y: 期望的Y坐标
-            tolerance: 位置容差，单位像素（默认10）
-            
-        Returns:
-            包含验证结果和新截图的字典
-        """
-        if tolerance is None:
-            tolerance = self.tolerance
-        
-        # 截取新的屏幕（已包含base64编码）
-        screenshot_result = self._take_screenshot()
-        
-        if not screenshot_result.get("success"):
-            return {
-                "success": False,
-                "error": f"截屏失败: {screenshot_result.get('error')}"
-            }
-        
-        filepath = screenshot_result["filepath"]
-        image_base64 = screenshot_result.get("base64")
-        
-        # 获取当前位置
-        current_pos = self._get_mouse_position()
-        
-        if current_pos is None:
-            return {
-                "success": False,
-                "error": "获取鼠标位置失败"
-            }
-        
-        distance = self._calculate_distance(
-            current_pos[0], current_pos[1],
-            expected_x, expected_y
-        )
-        
-        reached = distance <= tolerance
-        
-        return {
-            "success": True,
-            "reached_target": reached,
-            "current_position": {"x": current_pos[0], "y": current_pos[1]},
-            "expected_position": {"x": expected_x, "y": expected_y},
-            "distance": round(distance, 2),
-            "tolerance": tolerance,
-            "screenshot_path": filepath,
-            "screenshot_base64": image_base64 if image_base64 else None,
-            "message": "已到达目标位置" if reached else "未到达目标位置，请继续尝试"
-        }
-    
     def move_to_text_target(
         self,
         target_text: str,

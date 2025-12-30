@@ -49,7 +49,7 @@ async def list_tools() -> list[Tool]:
                 "智能移动鼠标到目标位置的完整工作流。"
                 "此工具会：1) 截取当前屏幕，2) 返回截图供AI分析，"
                 "3) AI需要分析图片找到目标位置并调用execute_move_to_coordinates。"
-                "这是工作流的第一步。"
+                "这是工作流的第一步。整个过程只需一次截图，验证通过鼠标位置计算完成。"
             ),
             inputSchema={
                 "type": "object",
@@ -75,9 +75,9 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="execute_move_to_coordinates",
             description=(
-                "执行移动鼠标到指定坐标并验证。"
+                "执行移动鼠标到指定坐标并通过鼠标位置验证。"
                 "这是在AI分析截图并确定目标坐标后调用的工具。"
-                "会移动鼠标并验证是否到达目标位置。"
+                "会移动鼠标并通过获取鼠标当前位置与目标位置计算距离来验证是否到达，无需额外截图。"
             ),
             inputSchema={
                 "type": "object",
@@ -102,32 +102,6 @@ async def list_tools() -> list[Tool]:
                     }
                 },
                 "required": ["target_x", "target_y"]
-            }
-        ),
-        Tool(
-            name="verify_position_with_screenshot",
-            description=(
-                "截图并验证当前鼠标位置是否到达预期位置。"
-                "如果未到达，返回新的截图供AI重新分析。"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "expected_x": {
-                        "type": "integer",
-                        "description": "期望的X坐标"
-                    },
-                    "expected_y": {
-                        "type": "integer",
-                        "description": "期望的Y坐标"
-                    },
-                    "tolerance": {
-                        "type": "integer",
-                        "description": "位置容差，单位像素（可选，默认10）",
-                        "default": 10
-                    }
-                },
-                "required": ["expected_x", "expected_y"]
             }
         )
     ]
@@ -162,14 +136,15 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | ImageCo
                 TextContent(
                     type="text",
                     text=(
-                        f"✅ 截图已准备好\n\n"
+                        f"✅ 截图已准备好（整个流程只需这一次截图）\n\n"
                         f"目标描述: {result['target_description']}\n"
                         f"当前鼠标位置: ({result['current_mouse_position']['x']}, "
                         f"{result['current_mouse_position']['y']})\n"
                         f"截图路径: {result['screenshot_path']}\n\n"
                         f"📋 下一步操作:\n"
                         f"{result['instructions']}\n\n"
-                        f"请分析下方的截图，找到'{target_description}'的坐标位置。"
+                        f"请分析下方的截图，找到'{target_description}'的坐标位置。\n"
+                        f"移动后将通过鼠标位置计算验证，无需再次截图。"
                     )
                 )
             ]
@@ -218,52 +193,10 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent | ImageCo
             text_response += f"移动后位置: ({result['after_position']['x']}, {result['after_position']['y']})\n"
             text_response += f"目标位置: ({result['target_position']['x']}, {result['target_position']['y']})\n"
             text_response += f"距离目标: {result['distance_to_target']} 像素\n"
-            text_response += f"容差范围: {result['tolerance']} 像素"
+            text_response += f"容差范围: {result['tolerance']} 像素\n"
+            text_response += f"验证方式: 通过鼠标位置计算（无需截图）"
             
             return [TextContent(type="text", text=text_response)]
-        
-        elif name == "verify_position_with_screenshot":
-            # 验证位置并截图
-            expected_x = arguments.get("expected_x")
-            expected_y = arguments.get("expected_y")
-            tolerance = arguments.get("tolerance")
-            
-            result = tools.verify_position_with_screenshot(
-                expected_x=expected_x,
-                expected_y=expected_y,
-                tolerance=tolerance
-            )
-            
-            if not result.get("success"):
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"错误: {result.get('error')}"
-                    )
-                ]
-            
-            # 构建响应
-            status_icon = "✅" if result["reached_target"] else "❌"
-            text_response = f"{status_icon} {result['message']}\n\n"
-            text_response += f"当前位置: ({result['current_position']['x']}, {result['current_position']['y']})\n"
-            text_response += f"期望位置: ({result['expected_position']['x']}, {result['expected_position']['y']})\n"
-            text_response += f"距离: {result['distance']} 像素\n"
-            text_response += f"容差: {result['tolerance']} 像素\n"
-            text_response += f"截图路径: {result['screenshot_path']}"
-            
-            response_parts = [TextContent(type="text", text=text_response)]
-            
-            # 添加截图
-            if result.get("screenshot_base64"):
-                response_parts.append(
-                    ImageContent(
-                        type="image",
-                        data=result["screenshot_base64"],
-                        mimeType="image/png"
-                    )
-                )
-            
-            return response_parts
         
         else:
             return [
