@@ -51,7 +51,8 @@ class SmartMouseMoveTools:
             return False
         try:
             with open("/proc/version", "r") as f:
-                return "microsoft" in f.read().lower() or "wsl" in f.read().lower()
+                version_info = f.read().lower()
+                return "microsoft" in version_info or "wsl" in version_info
         except:
             return False
     
@@ -284,6 +285,29 @@ class SmartMouseMoveTools:
         # 获取显示器信息
         monitor_info = self._get_monitor_info()
         
+        # 计算截图坐标系在全局桌面中的原点（用于从截图坐标转换到系统坐标）
+        origin_x = 0
+        origin_y = 0
+        screenshot_method = screenshot_result.get("method")
+        monitors = monitor_info.get("monitors") if isinstance(monitor_info, dict) else None
+
+        try:
+            if monitors and screenshot_method:
+                if screenshot_method == "powershell_wsl":
+                    # WSL + PowerShell 截图，仅截取主显示器
+                    primary_monitor = next(
+                        (m for m in monitors if m.get("IsPrimary")), None
+                    )
+                    if primary_monitor:
+                        origin_x = int(primary_monitor.get("Left", 0))
+                        origin_y = int(primary_monitor.get("Top", 0))
+                elif screenshot_method == "mss":
+                    # mss 全屏截图：图片 (0,0) 对应所有显示器中最小的 Left/Top
+                    origin_x = min(int(m.get("Left", 0)) for m in monitors)
+                    origin_y = min(int(m.get("Top", 0)) for m in monitors)
+        except Exception as e:
+            logger.debug(f"计算截图原点失败: {e}")
+        
         return {
             "success": True,
             "step": "ready_for_analysis",
@@ -303,12 +327,19 @@ class SmartMouseMoveTools:
                 "y": self.dpi_scale[1]
             },
             "monitor_info": monitor_info,
+            "screenshot_origin": {
+                "x": origin_x,
+                "y": origin_y
+            },
             "target_description": target_description,
             "instructions": (
-                "请分析截图，找到目标位置的坐标。\n"
-                f"截图尺寸: {screenshot_width}x{screenshot_height}\n"
-                f"DPI缩放: {self.dpi_scale[0]}x (X), {self.dpi_scale[1]}x (Y)\n"
-                "注意: 截图坐标就是Windows原生坐标，无需转换。\n"
+                "请分析截图，找到目标在截图中的坐标 (sx, sy)。\n"\
+                f"截图尺寸: {screenshot_width}x{screenshot_height}\n"\
+                f"DPI缩放: {self.dpi_scale[0]}x (X), {self.dpi_scale[1]}x (Y)\n"\
+                f"截图原点在系统坐标中的位置为: ({origin_x}, {origin_y})。\n"\
+                "从截图坐标转换到系统坐标时，请使用：\n"\
+                "  x = sx + screenshot_origin.x\n"\
+                "  y = sy + screenshot_origin.y\n"\
                 "然后调用 execute_move_to_coordinates 工具来移动鼠标"
             )
         }
