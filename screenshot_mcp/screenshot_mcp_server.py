@@ -103,6 +103,25 @@ async def handle_list_tools() -> list[Tool]:
                 "required": ["monitor_number"],
             },
         ),
+        Tool(
+            name="read_image",
+            description="读取图片文件并返回其尺寸、格式和可选的base64编码数据。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "图片文件的路径（绝对或相对路径）",
+                    },
+                    "return_base64": {
+                        "type": "boolean",
+                        "description": "是否返回图片的base64编码数据，默认为false",
+                        "default": False,
+                    }
+                },
+                "required": ["filepath"],
+            },
+        ),
     ]
 
 
@@ -294,6 +313,72 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent | Ima
 - 在Linux环境下，可能需要安装 mss 库: pip install mss
 """
             return [TextContent(type="text", text=error_text)]
+    
+    elif name == "read_image":
+        # 获取参数
+        filepath = arguments.get("filepath")
+        return_base64 = arguments.get("return_base64", False)
+        
+        if not filepath:
+            return [TextContent(
+                type="text",
+                text="❌ 错误: 必须指定 filepath 参数"
+            )]
+        
+        # 解析路径
+        import os
+        from pathlib import Path
+        from PIL import Image
+        import base64
+        
+        try:
+            # 转换为绝对路径
+            abs_path = Path(filepath).resolve()
+            if not abs_path.exists():
+                return [TextContent(
+                    type="text",
+                    text=f"❌ 错误: 文件不存在: {abs_path}"
+                )]
+            
+            # 打开图片
+            with Image.open(abs_path) as img:
+                info = {
+                    "filename": abs_path.name,
+                    "filepath": str(abs_path),
+                    "format": img.format,
+                    "size": img.size,
+                    "width": img.size[0],
+                    "height": img.size[1],
+                    "mode": img.mode,
+                    "size_bytes": os.path.getsize(abs_path)
+                }
+                
+                response_text = f"""📸 图片信息:
+
+📁 文件信息:
+  - 文件名: {info['filename']}
+  - 完整路径: {info['filepath']}
+  - 文件大小: {info['size_bytes']} 字节
+  - 文件格式: {info['format']}
+  
+📐 图片尺寸:
+  - 宽度: {info['width']} 像素
+  - 高度: {info['height']} 像素
+  - 颜色模式: {info['mode']}
+"""
+                if return_base64:
+                    with open(abs_path, "rb") as f:
+                        image_data = f.read()
+                        base64_data = base64.b64encode(image_data).decode("utf-8")
+                        info["base64"] = base64_data
+                        response_text += f"\n🔐 Base64数据已生成（长度: {len(base64_data)} 字符）"
+                
+                return [TextContent(type="text", text=response_text)]
+        except Exception as e:
+            return [TextContent(
+                type="text",
+                text=f"❌ 读取图片失败: {str(e)}"
+            )]
     
     else:
         return [TextContent(
