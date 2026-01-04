@@ -1,0 +1,12 @@
+# Browser Use MCP Server 依赖
+
+# browser-use 库 - AI 浏览器自动化
+browser-use>=0.11.0
+
+# MCP SDK
+mcp>=1.0.0
+
+# 可选：不同的 LLM 提供商（browser-use 已包含这些依赖）
+# openai>=1.0.0
+# anthropic>=0.20.0
+# google-generativeai>=0.3.0
