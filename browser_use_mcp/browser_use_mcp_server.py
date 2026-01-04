@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Browser Use MCP Server - 基于 browser-use 库的浏览器自动化 MCP 服务器
+"""Browser Use MCP Server - 基于 Playwright 的浏览器自动化 MCP 服务器
 
-这个 MCP 服务器将 browser-use 的浏览器操作能力封装为工具，供 AI 助手直接调用。
-不使用 browser-use 内置的 Agent/LLM，由 AI 助手来做决策和控制。
+这个 MCP 服务器使用 Playwright 直接操作浏览器，供 AI 助手直接调用。
+完全在 WSL 中执行，使用 Playwright 内置的 Chromium 浏览器。
 
 特性：
 1. 完整的浏览器控制 - 导航、点击、输入、滚动等
@@ -10,7 +10,7 @@
 3. 会话持久化 - 浏览器会话在多次对话间保持
 4. 安全凭证处理 - 用户名密码通过环境变量传递，不暴露给 AI
 5. 内容提取 - 截图、Markdown 提取
-6. WSL 兼容 - 支持在 WSL 环境中运行
+6. WSL 兼容 - 完全在 WSL 中运行
 """
 
 import asyncio
@@ -20,9 +20,6 @@ import signal
 import os
 from typing import Any, Optional
 from pathlib import Path
-
-# 禁用 browser-use 的默认日志设置
-os.environ['BROWSER_USE_SETUP_LOGGING'] = 'false'
 
 # 添加父目录到路径以便导入
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -603,7 +600,7 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent | Ima
                 text=f"""🔍 浏览器状态:
 
   - 浏览器运行中: {'是' if status['browser_active'] else '否'}
-  - 浏览器已启动: {'是' if status['browser_started'] else '否'}
+  - 页面活动: {'是' if status['page_active'] else '否'}
   - 当前会话: {status['current_session'] or '无'}
   - 已配置的敏感数据: {sensitive_keys}"""
             )]

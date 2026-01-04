@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Browser Use 工具模块 - 封装 browser-use 库的浏览器操作能力
+"""Browser Use 工具模块 - 基于 Playwright 的浏览器操作能力
 
-这个模块将 browser-use 的浏览器操作能力（包括底层和上层功能）封装为 MCP 工具，
-供 AI 助手直接调用。不使用 browser-use 内置的 Agent/LLM，由 AI 助手来做决策。
+这个模块使用 Playwright 直接操作浏览器，供 AI 助手直接调用。
+完全在 WSL 中执行，使用 Playwright 内置的 Chromium 浏览器。
 
 核心功能：
 1. 浏览器会话管理（创建、保存、恢复、关闭）
@@ -10,7 +10,7 @@
 3. DOM 状态获取（获取可交互元素列表，带索引）
 4. 元素交互（点击、输入、滚动、下拉框选择）
 5. 标签页管理（切换、关闭、新建）
-6. 内容提取（截图、Markdown 提取、PDF 下载）
+6. 内容提取（截图、Markdown 提取）
 7. 文件上传
 8. 坐标点击（用于特殊场景）
 
@@ -24,12 +24,11 @@ import asyncio
 import json
 import os
 import base64
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import logging
-
-# 禁用 browser-use 的默认日志设置，避免与 MCP 冲突
-os.environ['BROWSER_USE_SETUP_LOGGING'] = 'false'
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +106,10 @@ def reload_credentials() -> Dict[str, str]:
     return load_credentials()
 
 
-class BrowserUseManager:
-    """基于 browser-use 库的浏览器管理器
+class PlaywrightBrowserManager:
+    """基于 Playwright 的浏览器管理器
     
-    将 browser-use 的浏览器操作能力封装为工具，供 AI 助手直接调用。
-    AI 助手负责决策，这个管理器负责执行具体的浏览器操作。
+    直接使用 Playwright 操作浏览器，完全在 WSL 中执行。
     """
     
     def __init__(self, session_dir: Optional[str] = None):
@@ -124,45 +122,32 @@ class BrowserUseManager:
         self.session_dir = Path(session_dir) if session_dir else Path.home() / ".browser_use_mcp" / "sessions"
         self.session_dir.mkdir(parents=True, exist_ok=True)
         
-        self._browser_session = None
+        self._playwright = None
+        self._browser = None
+        self._context = None
+        self._page = None
         self._current_session_id: Optional[str] = None
-        self._is_started = False
         
-    def _get_user_data_dir(self, session_id: str) -> Path:
-        """获取用户数据目录路径"""
-        return self.session_dir / f"{session_id}_profile"
-    
+        # 元素索引映射
+        self._element_map: Dict[int, dict] = {}
+        
     def _get_storage_state_file(self, session_id: str) -> Path:
         """获取存储状态文件路径"""
         return self.session_dir / f"{session_id}_storage_state.json"
     
-    def _is_wsl(self) -> bool:
-        """检测是否在 WSL 环境中"""
-        try:
-            with open('/proc/version', 'r') as f:
-                return 'microsoft' in f.read().lower()
-        except:
-            return False
-    
     def _get_sensitive_data(self) -> Dict[str, str]:
-        """获取敏感数据（从 .env 文件加载）
-        
-        凭证存储在 browser_use_mcp/.env 文件中，格式：
-        GITHUB_USERNAME=your_username
-        GITHUB_PASSWORD=your_password
-        EMAIL=your_email@example.com
-        
-        AI 只能通过 credential_key 引用凭证，无法看到实际值。
-        """
+        """获取敏感数据（从 .env 文件加载）"""
         return load_credentials()
     
     async def create_session(
-        self, 
-        session_id: str, 
+        self,
+        session_id: str,
         headless: bool = False,
     ) -> Dict[str, Any]:
         """
         创建或恢复浏览器会话
+        
+        使用 Playwright 内置的 Chromium 浏览器，完全在 WSL 中执行。
         
         Args:
             session_id: 会话标识符
@@ -171,62 +156,66 @@ class BrowserUseManager:
         Returns:
             会话信息字典
         """
-        import datetime
-        from browser_use import BrowserSession, BrowserProfile
+        from playwright.async_api import async_playwright
         
         # 关闭现有会话
-        if self._browser_session:
+        if self._browser:
             await self.close_session(save=True)
         
-        user_data_dir = self._get_user_data_dir(session_id)
         storage_state_file = self._get_storage_state_file(session_id)
         
         # 检查是否有保存的会话状态
         restored = storage_state_file.exists()
         
-        # 创建浏览器配置
-        browser_profile = BrowserProfile(
-            headless=headless,
-            user_data_dir=str(user_data_dir),
-            storage_state=str(storage_state_file) if restored else None,
-            disable_security=False,
-            # WSL 兼容参数
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-            ] if self._is_wsl() else None,
-        )
-        
-        # 创建浏览器会话
-        self._browser_session = BrowserSession(
-            browser_profile=browser_profile,
-            keep_alive=True,
-        )
-        
-        self._current_session_id = session_id
-        self._is_started = False
-        
-        now = datetime.datetime.now().isoformat()
-        
-        return {
-            "success": True,
-            "session_id": session_id,
-            "message": f"会话 '{session_id}' 已创建",
-            "restored": restored,
-            "created_at": now,
-            "user_data_dir": str(user_data_dir),
-            "headless": headless,
-        }
-    
-    async def _ensure_started(self):
-        """确保浏览器已启动"""
-        if not self._browser_session:
-            raise RuntimeError("没有活动的浏览器会话，请先创建会话")
-        
-        if not self._is_started:
-            await self._browser_session.start()
-            self._is_started = True
+        try:
+            # 启动 Playwright
+            self._playwright = await async_playwright().start()
+            
+            # 启动浏览器
+            self._browser = await self._playwright.chromium.launch(
+                headless=headless,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                ]
+            )
+            
+            # 创建浏览器上下文
+            context_options = {
+                'viewport': {'width': 1280, 'height': 720},
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            }
+            
+            if restored:
+                context_options['storage_state'] = str(storage_state_file)
+            
+            self._context = await self._browser.new_context(**context_options)
+            
+            # 创建页面
+            self._page = await self._context.new_page()
+            
+            self._current_session_id = session_id
+            
+            now = datetime.datetime.now().isoformat()
+            
+            return {
+                "success": True,
+                "session_id": session_id,
+                "message": f"会话 '{session_id}' 已创建 (Playwright 模式)",
+                "restored": restored,
+                "created_at": now,
+                "headless": headless,
+            }
+            
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
     
     async def save_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """保存当前会话状态"""
@@ -235,12 +224,12 @@ class BrowserUseManager:
         if not session_id:
             return {"success": False, "error": "没有活动的会话"}
         
-        if not self._browser_session:
-            return {"success": False, "error": "浏览器会话未初始化"}
+        if not self._context:
+            return {"success": False, "error": "浏览器上下文未初始化"}
         
         try:
             storage_state_file = self._get_storage_state_file(session_id)
-            await self._browser_session.export_storage_state(output_path=str(storage_state_file))
+            await self._context.storage_state(path=str(storage_state_file))
             
             return {
                 "success": True,
@@ -255,21 +244,38 @@ class BrowserUseManager:
         """关闭当前会话"""
         result = {"success": True, "message": "会话已关闭"}
         
-        if save and self._current_session_id:
+        if save and self._current_session_id and self._context:
             save_result = await self.save_session()
             result["saved"] = save_result.get("success", False)
         
-        if self._browser_session:
-            try:
-                await self._browser_session.stop()
-            except:
-                pass
-            self._browser_session = None
+        try:
+            if self._page:
+                await self._page.close()
+                self._page = None
+            
+            if self._context:
+                await self._context.close()
+                self._context = None
+            
+            if self._browser:
+                await self._browser.close()
+                self._browser = None
+            
+            if self._playwright:
+                await self._playwright.stop()
+                self._playwright = None
+        except Exception as e:
+            logger.error(f"关闭会话时出错: {e}")
         
         self._current_session_id = None
-        self._is_started = False
+        self._element_map = {}
         
         return result
+    
+    async def _ensure_page(self):
+        """确保页面已创建"""
+        if not self._page:
+            raise RuntimeError("没有活动的浏览器会话，请先创建会话")
     
     async def navigate(self, url: str, new_tab: bool = False) -> Dict[str, Any]:
         """
@@ -283,16 +289,14 @@ class BrowserUseManager:
             导航结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import NavigateToUrlEvent
+            if new_tab:
+                self._page = await self._context.new_page()
             
-            event = self._browser_session.event_bus.dispatch(
-                NavigateToUrlEvent(url=url, new_tab=new_tab)
-            )
-            await event
+            await self._page.goto(url, wait_until='domcontentloaded', timeout=30000)
             
-            # 等待页面加载
+            # 等待页面稳定
             await asyncio.sleep(1)
             
             return {
@@ -307,12 +311,8 @@ class BrowserUseManager:
     async def go_back(self) -> Dict[str, Any]:
         """后退到上一页"""
         try:
-            await self._ensure_started()
-            
-            from browser_use.browser.events import GoBackEvent
-            
-            event = self._browser_session.event_bus.dispatch(GoBackEvent())
-            await event
+            await self._ensure_page()
+            await self._page.go_back()
             
             return {
                 "success": True,
@@ -321,79 +321,173 @@ class BrowserUseManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    async def _build_element_map(self) -> List[dict]:
+        """构建可交互元素映射"""
+        await self._ensure_page()
+        
+        # 获取所有可交互元素
+        elements = await self._page.evaluate('''() => {
+            const interactiveSelectors = [
+                'a[href]',
+                'button',
+                'input',
+                'textarea',
+                'select',
+                '[role="button"]',
+                '[role="link"]',
+                '[role="textbox"]',
+                '[role="checkbox"]',
+                '[role="radio"]',
+                '[role="combobox"]',
+                '[role="menuitem"]',
+                '[role="tab"]',
+                '[onclick]',
+                '[tabindex]:not([tabindex="-1"])',
+            ];
+            
+            const elements = [];
+            const seen = new Set();
+            
+            for (const selector of interactiveSelectors) {
+                const nodes = document.querySelectorAll(selector);
+                for (const node of nodes) {
+                    // 跳过隐藏元素
+                    const style = window.getComputedStyle(node);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                        continue;
+                    }
+                    
+                    // 跳过已处理的元素
+                    if (seen.has(node)) continue;
+                    seen.add(node);
+                    
+                    const rect = node.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    
+                    const element = {
+                        tag: node.tagName.toLowerCase(),
+                        text: (node.innerText || node.value || '').substring(0, 100).trim(),
+                        type: node.type || null,
+                        name: node.name || null,
+                        placeholder: node.placeholder || null,
+                        href: node.href || null,
+                        role: node.getAttribute('role') || null,
+                        ariaLabel: node.getAttribute('aria-label') || null,
+                        id: node.id || null,
+                        className: node.className || null,
+                        rect: {
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height,
+                        },
+                        // 生成唯一选择器
+                        selector: generateSelector(node),
+                    };
+                    
+                    elements.push(element);
+                }
+            }
+            
+            function generateSelector(el) {
+                if (el.id) return '#' + CSS.escape(el.id);
+                
+                let path = [];
+                while (el && el.nodeType === Node.ELEMENT_NODE) {
+                    let selector = el.tagName.toLowerCase();
+                    if (el.id) {
+                        selector = '#' + CSS.escape(el.id);
+                        path.unshift(selector);
+                        break;
+                    }
+                    
+                    let sibling = el;
+                    let nth = 1;
+                    while (sibling = sibling.previousElementSibling) {
+                        if (sibling.tagName === el.tagName) nth++;
+                    }
+                    
+                    if (nth > 1) selector += ':nth-of-type(' + nth + ')';
+                    path.unshift(selector);
+                    el = el.parentElement;
+                    
+                    if (path.length > 5) break;
+                }
+                
+                return path.join(' > ');
+            }
+            
+            return elements;
+        }''')
+        
+        # 构建索引映射
+        self._element_map = {}
+        result = []
+        
+        for i, el in enumerate(elements):
+            self._element_map[i] = el
+            result.append({
+                "index": i,
+                "tag": el['tag'],
+                "text": el['text'],
+                "type": el.get('type'),
+                "name": el.get('name'),
+                "placeholder": el.get('placeholder'),
+                "href": el.get('href'),
+                "role": el.get('role'),
+                "aria_label": el.get('ariaLabel'),
+            })
+        
+        return result
+    
     async def get_state(self, include_screenshot: bool = True) -> Dict[str, Any]:
         """
         获取当前浏览器状态，包括可交互元素列表
-        
-        这是核心功能：返回页面上所有可交互元素的列表，每个元素都有一个索引号，
-        AI 助手可以通过索引号来点击或操作这些元素。
         
         Args:
             include_screenshot: 是否包含截图
             
         Returns:
-            浏览器状态，包括：
-            - url: 当前页面 URL
-            - title: 页面标题
-            - tabs: 标签页列表
-            - elements: 可交互元素列表（带索引）
-            - screenshot: 页面截图（base64，可选）
+            浏览器状态
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            # 获取浏览器状态
-            state = await self._browser_session.get_browser_state_summary(
-                include_screenshot=include_screenshot
-            )
+            # 获取基本信息
+            url = self._page.url
+            title = await self._page.title()
+            
+            # 获取所有标签页
+            tabs = []
+            for i, page in enumerate(self._context.pages):
+                tabs.append({
+                    "id": i,
+                    "url": page.url,
+                    "title": await page.title(),
+                })
+            
+            # 构建元素映射
+            elements = await self._build_element_map()
             
             result = {
                 "success": True,
-                "url": state.url,
-                "title": state.title,
-                "tabs": [{"id": tab.tab_id, "url": tab.url, "title": tab.title} for tab in state.tabs] if state.tabs else [],
-                "active_tab_index": state.active_tab_index,
+                "url": url,
+                "title": title,
+                "tabs": tabs,
+                "elements": elements,
+                "elements_count": len(elements),
             }
             
-            # 提取可交互元素
-            if state.dom_state and state.dom_state.selector_map:
-                elements = []
-                for index, node in state.dom_state.selector_map.items():
-                    element_info = {
-                        "index": index,
-                        "tag": node.tag_name,
-                        "text": node.text[:100] if node.text else "",
-                        "role": node.role if hasattr(node, 'role') else None,
-                    }
-                    
-                    # 添加重要属性
-                    if hasattr(node, 'attributes') and node.attributes:
-                        if 'href' in node.attributes:
-                            element_info['href'] = node.attributes['href']
-                        if 'placeholder' in node.attributes:
-                            element_info['placeholder'] = node.attributes['placeholder']
-                        if 'type' in node.attributes:
-                            element_info['type'] = node.attributes['type']
-                        if 'name' in node.attributes:
-                            element_info['name'] = node.attributes['name']
-                        if 'aria-label' in node.attributes:
-                            element_info['aria_label'] = node.attributes['aria-label']
-                    
-                    elements.append(element_info)
-                
-                result["elements"] = elements
-                result["elements_count"] = len(elements)
-            else:
-                result["elements"] = []
-                result["elements_count"] = 0
-            
-            # 获取 DOM 的文本表示（用于 AI 理解页面结构）
-            if state.dom_state:
-                result["dom_text"] = state.dom_state.llm_representation()
+            # 获取页面文本内容（简化版）
+            dom_text = await self._page.evaluate('''() => {
+                return document.body.innerText.substring(0, 5000);
+            }''')
+            result["dom_text"] = dom_text
             
             # 截图
-            if include_screenshot and state.screenshot:
-                result["screenshot_base64"] = state.screenshot
+            if include_screenshot:
+                screenshot_bytes = await self._page.screenshot(type='png')
+                result["screenshot_base64"] = base64.b64encode(screenshot_bytes).decode('utf-8')
             
             return result
             
@@ -406,26 +500,24 @@ class BrowserUseManager:
         点击指定索引的元素
         
         Args:
-            index: 元素索引（从 get_state 返回的 elements 列表中获取）
+            index: 元素索引
             
         Returns:
             点击结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import ClickElementEvent
+            if index not in self._element_map:
+                # 重新构建元素映射
+                await self._build_element_map()
+                if index not in self._element_map:
+                    return {"success": False, "error": f"元素索引 {index} 不存在"}
             
-            # 获取元素
-            node = await self._browser_session.get_element_by_index(index)
-            if node is None:
-                return {"success": False, "error": f"元素索引 {index} 不存在"}
+            element = self._element_map[index]
+            selector = element['selector']
             
-            # 点击元素
-            event = self._browser_session.event_bus.dispatch(
-                ClickElementEvent(index=index, element=node)
-            )
-            await event
+            await self._page.click(selector, timeout=5000)
             
             # 等待页面响应
             await asyncio.sleep(0.5)
@@ -451,20 +543,20 @@ class BrowserUseManager:
             输入结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import TypeTextEvent
+            if index not in self._element_map:
+                await self._build_element_map()
+                if index not in self._element_map:
+                    return {"success": False, "error": f"元素索引 {index} 不存在"}
             
-            # 获取元素
-            node = await self._browser_session.get_element_by_index(index)
-            if node is None:
-                return {"success": False, "error": f"元素索引 {index} 不存在"}
+            element = self._element_map[index]
+            selector = element['selector']
             
-            # 输入文本
-            event = self._browser_session.event_bus.dispatch(
-                TypeTextEvent(index=index, text=text, element=node, clear_first=clear_first)
-            )
-            await event
+            if clear_first:
+                await self._page.fill(selector, text, timeout=5000)
+            else:
+                await self._page.type(selector, text, timeout=5000)
             
             return {
                 "success": True,
@@ -477,11 +569,11 @@ class BrowserUseManager:
     
     async def input_sensitive(self, index: int, credential_key: str, clear_first: bool = True) -> Dict[str, Any]:
         """
-        安全地在输入框中填入敏感数据（从环境变量读取）
+        安全地在输入框中填入敏感数据
         
         Args:
             index: 元素索引
-            credential_key: 敏感数据键名（如 'username', 'password'）
+            credential_key: 敏感数据键名
             clear_first: 是否先清空输入框
             
         Returns:
@@ -513,20 +605,15 @@ class BrowserUseManager:
         发送键盘按键
         
         Args:
-            keys: 按键字符串，如 'Enter', 'Tab', 'Escape', 'ArrowDown' 等
+            keys: 按键字符串，如 'Enter', 'Tab', 'Escape' 等
             
         Returns:
             按键结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import SendKeysEvent
-            
-            event = self._browser_session.event_bus.dispatch(
-                SendKeysEvent(keys=keys)
-            )
-            await event
+            await self._page.keyboard.press(keys)
             
             return {
                 "success": True,
@@ -542,26 +629,25 @@ class BrowserUseManager:
         
         Args:
             direction: 滚动方向，'up' 或 'down'
-            index: 元素索引（可选，不指定则滚动整个页面）
+            index: 元素索引（可选）
             
         Returns:
             滚动结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import ScrollEvent
+            delta = 500 if direction == "down" else -500
             
-            node = None
-            if index is not None and index != 0:
-                node = await self._browser_session.get_element_by_index(index)
-                if node is None:
-                    return {"success": False, "error": f"元素索引 {index} 不存在"}
-            
-            event = self._browser_session.event_bus.dispatch(
-                ScrollEvent(down=(direction == "down"), index=index, element=node)
-            )
-            await event
+            if index is not None and index in self._element_map:
+                element = self._element_map[index]
+                selector = element['selector']
+                await self._page.evaluate(f'''(delta) => {{
+                    const el = document.querySelector("{selector}");
+                    if (el) el.scrollBy(0, delta);
+                }}''', delta)
+            else:
+                await self._page.evaluate(f'window.scrollBy(0, {delta})')
             
             target = f"元素 {index}" if index else "页面"
             return {
@@ -578,20 +664,23 @@ class BrowserUseManager:
         切换到指定标签页
         
         Args:
-            tab_index: 标签页索引（从 get_state 返回的 tabs 列表中获取）
+            tab_index: 标签页索引
             
         Returns:
             切换结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import SwitchTabEvent
+            pages = self._context.pages
+            if tab_index < 0 or tab_index >= len(pages):
+                return {"success": False, "error": f"标签页索引 {tab_index} 不存在"}
             
-            event = self._browser_session.event_bus.dispatch(
-                SwitchTabEvent(tab_index=tab_index)
-            )
-            await event
+            self._page = pages[tab_index]
+            await self._page.bring_to_front()
+            
+            # 重新构建元素映射
+            self._element_map = {}
             
             return {
                 "success": True,
@@ -606,20 +695,34 @@ class BrowserUseManager:
         关闭标签页
         
         Args:
-            tab_index: 标签页索引（可选，不指定则关闭当前标签页）
+            tab_index: 标签页索引（可选）
             
         Returns:
             关闭结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import CloseTabEvent
+            pages = self._context.pages
             
-            event = self._browser_session.event_bus.dispatch(
-                CloseTabEvent(tab_index=tab_index)
-            )
-            await event
+            if tab_index is not None:
+                if tab_index < 0 or tab_index >= len(pages):
+                    return {"success": False, "error": f"标签页索引 {tab_index} 不存在"}
+                page_to_close = pages[tab_index]
+            else:
+                page_to_close = self._page
+            
+            await page_to_close.close()
+            
+            # 如果关闭的是当前页面，切换到其他页面
+            if page_to_close == self._page:
+                remaining_pages = self._context.pages
+                if remaining_pages:
+                    self._page = remaining_pages[-1]
+                else:
+                    self._page = await self._context.new_page()
+            
+            self._element_map = {}
             
             return {
                 "success": True,
@@ -640,9 +743,7 @@ class BrowserUseManager:
             截图结果
         """
         try:
-            await self._ensure_started()
-            
-            import datetime
+            await self._ensure_page()
             
             if not filename:
                 timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -653,22 +754,14 @@ class BrowserUseManager:
             
             filepath = screenshot_dir / filename
             
-            # 获取截图
-            state = await self._browser_session.get_browser_state_summary(include_screenshot=True)
+            await self._page.screenshot(path=str(filepath))
             
-            if state.screenshot:
-                with open(filepath, 'wb') as f:
-                    f.write(base64.b64decode(state.screenshot))
-                
-                return {
-                    "success": True,
-                    "filepath": str(filepath),
-                    "filename": filename,
-                    "message": "截图已保存",
-                }
-            else:
-                return {"success": False, "error": "无法获取截图"}
-                
+            return {
+                "success": True,
+                "filepath": str(filepath),
+                "filename": filename,
+                "message": "截图已保存",
+            }
         except Exception as e:
             return {"success": False, "error": str(e)}
     
@@ -680,9 +773,9 @@ class BrowserUseManager:
             页面文本内容
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            text = await self._browser_session.get_state_as_text()
+            text = await self._page.evaluate('() => document.body.innerText')
             
             return {
                 "success": True,
@@ -698,7 +791,7 @@ class BrowserUseManager:
         
         Args:
             query: 搜索关键词
-            engine: 搜索引擎，支持 'google', 'bing', 'duckduckgo'
+            engine: 搜索引擎
             
         Returns:
             搜索结果
@@ -732,8 +825,6 @@ class BrowserUseManager:
         """
         提取当前页面内容为 Markdown 格式
         
-        这是 browser-use 的上层功能，可以将页面内容转换为干净的 Markdown。
-        
         Args:
             extract_links: 是否保留链接
             
@@ -741,20 +832,90 @@ class BrowserUseManager:
             Markdown 内容
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.dom.markdown_extractor import extract_clean_markdown
+            # 简单的 HTML 到 Markdown 转换
+            content = await self._page.evaluate('''(extractLinks) => {
+                function htmlToMarkdown(element) {
+                    let result = '';
+                    
+                    for (const node of element.childNodes) {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            result += node.textContent;
+                        } else if (node.nodeType === Node.ELEMENT_NODE) {
+                            const tag = node.tagName.toLowerCase();
+                            
+                            switch (tag) {
+                                case 'h1':
+                                    result += '\\n# ' + node.innerText + '\\n';
+                                    break;
+                                case 'h2':
+                                    result += '\\n## ' + node.innerText + '\\n';
+                                    break;
+                                case 'h3':
+                                    result += '\\n### ' + node.innerText + '\\n';
+                                    break;
+                                case 'h4':
+                                    result += '\\n#### ' + node.innerText + '\\n';
+                                    break;
+                                case 'p':
+                                    result += '\\n' + htmlToMarkdown(node) + '\\n';
+                                    break;
+                                case 'a':
+                                    if (extractLinks && node.href) {
+                                        result += '[' + node.innerText + '](' + node.href + ')';
+                                    } else {
+                                        result += node.innerText;
+                                    }
+                                    break;
+                                case 'strong':
+                                case 'b':
+                                    result += '**' + node.innerText + '**';
+                                    break;
+                                case 'em':
+                                case 'i':
+                                    result += '*' + node.innerText + '*';
+                                    break;
+                                case 'code':
+                                    result += '`' + node.innerText + '`';
+                                    break;
+                                case 'pre':
+                                    result += '\\n```\\n' + node.innerText + '\\n```\\n';
+                                    break;
+                                case 'ul':
+                                case 'ol':
+                                    result += '\\n' + htmlToMarkdown(node) + '\\n';
+                                    break;
+                                case 'li':
+                                    result += '- ' + htmlToMarkdown(node) + '\\n';
+                                    break;
+                                case 'br':
+                                    result += '\\n';
+                                    break;
+                                case 'script':
+                                case 'style':
+                                case 'noscript':
+                                    break;
+                                default:
+                                    result += htmlToMarkdown(node);
+                            }
+                        }
+                    }
+                    
+                    return result;
+                }
+                
+                return htmlToMarkdown(document.body);
+            }''', extract_links)
             
-            content, stats = await extract_clean_markdown(
-                browser_session=self._browser_session,
-                extract_links=extract_links
-            )
+            # 清理多余的空行
+            content = re.sub(r'\n{3,}', '\n\n', content)
+            content = content.strip()
             
             return {
                 "success": True,
                 "markdown": content,
                 "length": len(content),
-                "stats": stats,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -771,23 +932,21 @@ class BrowserUseManager:
             上传结果
         """
         try:
-            await self._ensure_started()
-            
-            from browser_use.browser.events import UploadFileEvent
+            await self._ensure_page()
             
             # 检查文件是否存在
             if not Path(file_path).exists():
                 return {"success": False, "error": f"文件不存在: {file_path}"}
             
-            # 获取元素
-            node = await self._browser_session.get_element_by_index(index)
-            if node is None:
-                return {"success": False, "error": f"元素索引 {index} 不存在"}
+            if index not in self._element_map:
+                await self._build_element_map()
+                if index not in self._element_map:
+                    return {"success": False, "error": f"元素索引 {index} 不存在"}
             
-            event = self._browser_session.event_bus.dispatch(
-                UploadFileEvent(index=index, file_path=file_path, element=node)
-            )
-            await event
+            element = self._element_map[index]
+            selector = element['selector']
+            
+            await self._page.set_input_files(selector, file_path)
             
             return {
                 "success": True,
@@ -802,8 +961,6 @@ class BrowserUseManager:
         """
         点击指定坐标位置
         
-        用于特殊场景，如点击画布、地图等无法通过元素索引点击的区域。
-        
         Args:
             x: X 坐标
             y: Y 坐标
@@ -812,14 +969,9 @@ class BrowserUseManager:
             点击结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import ClickCoordinateEvent
-            
-            event = self._browser_session.event_bus.dispatch(
-                ClickCoordinateEvent(x=x, y=y)
-            )
-            await event
+            await self._page.mouse.click(x, y)
             
             return {
                 "success": True,
@@ -841,20 +993,40 @@ class BrowserUseManager:
             滚动结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import ScrollToTextEvent
+            # 查找包含文本的元素并滚动到视图
+            found = await self._page.evaluate(f'''(text) => {{
+                const walker = document.createTreeWalker(
+                    document.body,
+                    NodeFilter.SHOW_TEXT,
+                    null,
+                    false
+                );
+                
+                while (walker.nextNode()) {{
+                    if (walker.currentNode.textContent.includes(text)) {{
+                        walker.currentNode.parentElement.scrollIntoView({{
+                            behavior: 'smooth',
+                            block: 'center'
+                        }});
+                        return true;
+                    }}
+                }}
+                return false;
+            }}''', text)
             
-            event = self._browser_session.event_bus.dispatch(
-                ScrollToTextEvent(text=text)
-            )
-            await event
-            
-            return {
-                "success": True,
-                "text": text,
-                "message": f"已滚动到文本: {text}",
-            }
+            if found:
+                return {
+                    "success": True,
+                    "text": text,
+                    "message": f"已滚动到文本: {text}",
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"未找到文本: {text}",
+                }
         except Exception as e:
             return {"success": False, "error": str(e)}
     
@@ -885,11 +1057,10 @@ class BrowserUseManager:
             cookies 列表
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            cookies = await self._browser_session.cookies()
+            cookies = await self._context.cookies()
             
-            # 转换为可序列化的格式
             cookies_list = []
             for cookie in cookies:
                 cookies_list.append({
@@ -915,9 +1086,9 @@ class BrowserUseManager:
             清除结果
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            await self._browser_session.clear_cookies()
+            await self._context.clear_cookies()
             
             return {
                 "success": True,
@@ -937,24 +1108,31 @@ class BrowserUseManager:
             选项列表
         """
         try:
-            await self._ensure_started()
+            await self._ensure_page()
             
-            from browser_use.browser.events import GetDropdownOptionsEvent
+            if index not in self._element_map:
+                await self._build_element_map()
+                if index not in self._element_map:
+                    return {"success": False, "error": f"元素索引 {index} 不存在"}
             
-            node = await self._browser_session.get_element_by_index(index)
-            if node is None:
-                return {"success": False, "error": f"元素索引 {index} 不存在"}
+            element = self._element_map[index]
+            selector = element['selector']
             
-            event = self._browser_session.event_bus.dispatch(
-                GetDropdownOptionsEvent(index=index, element=node)
-            )
-            await event
-            result = await event.event_result()
+            options = await self._page.evaluate(f'''() => {{
+                const select = document.querySelector("{selector}");
+                if (!select || select.tagName !== 'SELECT') return [];
+                
+                return Array.from(select.options).map(opt => ({{
+                    value: opt.value,
+                    text: opt.text,
+                    selected: opt.selected,
+                }}));
+            }}''')
             
             return {
                 "success": True,
                 "index": index,
-                "options": result if result else [],
+                "options": options,
             }
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -967,12 +1145,9 @@ class BrowserUseManager:
             session_id = state_file.stem.replace("_storage_state", "")
             stat = state_file.stat()
             
-            user_data_dir = self._get_user_data_dir(session_id)
-            
             sessions.append({
                 "session_id": session_id,
                 "storage_state_file": str(state_file),
-                "user_data_dir": str(user_data_dir) if user_data_dir.exists() else None,
                 "size_bytes": stat.st_size,
                 "modified_at": stat.st_mtime,
             })
@@ -986,20 +1161,13 @@ class BrowserUseManager:
     
     async def delete_session(self, session_id: str) -> Dict[str, Any]:
         """删除保存的会话"""
-        import shutil
-        
         storage_state_file = self._get_storage_state_file(session_id)
-        user_data_dir = self._get_user_data_dir(session_id)
         
         deleted_items = []
         
         if storage_state_file.exists():
             storage_state_file.unlink()
             deleted_items.append(str(storage_state_file))
-            
-        if user_data_dir.exists():
-            shutil.rmtree(user_data_dir)
-            deleted_items.append(str(user_data_dir))
         
         if deleted_items:
             return {
@@ -1017,8 +1185,8 @@ class BrowserUseManager:
     def get_status(self) -> Dict[str, Any]:
         """获取当前状态"""
         return {
-            "browser_active": self._browser_session is not None,
-            "browser_started": self._is_started,
+            "browser_active": self._browser is not None,
+            "page_active": self._page is not None,
             "current_session": self._current_session_id,
             "session_dir": str(self.session_dir),
             "sensitive_data_keys": list(self._get_sensitive_data().keys()),
@@ -1029,15 +1197,19 @@ class BrowserUseManager:
         await self.close_session(save=True)
 
 
+# 使用新的 Playwright 管理器
+BrowserUseManager = PlaywrightBrowserManager
+
+
 # 全局浏览器管理器实例
-_browser_manager: Optional[BrowserUseManager] = None
+_browser_manager: Optional[PlaywrightBrowserManager] = None
 
 
-def get_browser_manager() -> BrowserUseManager:
+def get_browser_manager() -> PlaywrightBrowserManager:
     """获取全局浏览器管理器实例"""
     global _browser_manager
     if _browser_manager is None:
-        _browser_manager = BrowserUseManager()
+        _browser_manager = PlaywrightBrowserManager()
     return _browser_manager
 
 
