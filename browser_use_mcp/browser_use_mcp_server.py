@@ -82,6 +82,51 @@ async def handle_list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="browser_hybrid_login",
+            description="""🎭 混合模式登录助手 - 处理需要人工验证的登录场景
+
+这是一个自动化工具,用于处理需要人工操作的登录验证(如 reCAPTCHA、验证码等)。
+
+工作流程:
+1. 打开浏览器窗口(有头模式)
+2. 导航到登录页面
+3. 等待指定时间,让用户手动完成登录和验证
+4. 自动保存登录状态
+5. 关闭浏览器
+
+后续使用:
+- 使用 browser_create_session(session_id, headless=True) 恢复登录状态
+- 无需重新登录,直接进行自动化操作
+
+适用场景:
+- reCAPTCHA 验证
+- 图片验证码
+- 短信/邮箱验证
+- 二维码扫码登录
+- 多因素认证
+
+💡 提示: 调用此工具后,浏览器会打开并等待用户操作,请在指定时间内完成登录。""",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {
+                        "type": "string",
+                        "description": "会话标识符,用于保存和恢复登录状态。建议使用有意义的名称,如 'github_login', 'company_intranet'",
+                    },
+                    "login_url": {
+                        "type": "string",
+                        "description": "登录页面的 URL,需要包含协议(如 https://)",
+                    },
+                    "wait_seconds": {
+                        "type": "integer",
+                        "description": "等待用户完成登录的秒数,默认 60 秒。根据登录复杂度调整",
+                        "default": 60,
+                    },
+                },
+                "required": ["session_id", "login_url"],
+            },
+        ),
+        Tool(
             name="browser_save_session",
             description="保存当前浏览器会话状态（cookies、localStorage 等）",
             inputSchema={
@@ -528,7 +573,40 @@ async def handle_call_tool(name: str, arguments: dict) -> list[TextContent | Ima
     
     try:
         # ===== 会话管理 =====
-        if name == "browser_create_session":
+        if name == "browser_hybrid_login":
+            session_id = arguments.get("session_id")
+            login_url = arguments.get("login_url")
+            wait_seconds = arguments.get("wait_seconds", 60)
+            
+            # 确保URL包含协议
+            if not login_url.startswith(('http://', 'https://')):
+                login_url = 'https://' + login_url
+            
+            # 执行混合模式登录
+            result = await manager.hybrid_login(session_id, login_url, wait_seconds)
+            
+            if result.get("success"):
+                next_steps = "\n".join([f"  • {step}" for step in result.get("next_steps", [])])
+                return [TextContent(
+                    type="text",
+                    text=f"""✅ 混合模式登录完成!
+
+📋 会话信息:
+  - 会话名称: {result['session_id']}
+  - 登录URL: {result['login_url']}
+  - 存储位置: {result['storage_state_file']}
+  - 会话已存在: {'是' if result.get('session_exists_before') else '否'}
+
+💡 后续使用:
+{next_steps}
+
+会话已保存,后续可以使用无头模式自动恢复登录状态!
+"""
+                )]
+            else:
+                return [TextContent(type="text", text=f"❌ 混合模式登录失败: {result.get('error')}")]
+        
+        elif name == "browser_create_session":
             session_id = arguments.get("session_id")
             headless = arguments.get("headless", False)
             

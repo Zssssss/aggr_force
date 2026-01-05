@@ -1192,6 +1192,95 @@ class PlaywrightBrowserManager:
             "sensitive_data_keys": list(self._get_sensitive_data().keys()),
         }
     
+    async def hybrid_login(
+        self,
+        session_id: str,
+        login_url: str,
+        wait_seconds: int = 60
+    ) -> Dict[str, Any]:
+        """
+        混合模式登录助手 - 自动化处理需要人工验证的登录场景
+        
+        工作流程:
+        1. 使用有头模式打开浏览器(显示窗口)
+        2. 导航到登录页面
+        3. 等待用户手动完成登录和验证(reCAPTCHA等)
+        4. 自动保存会话状态
+        5. 关闭浏览器
+        
+        后续使用:
+        - 使用 create_session(session_id, headless=True) 恢复登录状态
+        - 无需重新登录,直接进行自动化操作
+        
+        Args:
+            session_id: 会话标识符
+            login_url: 登录页面URL
+            wait_seconds: 等待用户完成登录的秒数(默认60秒)
+            
+        Returns:
+            登录结果
+        """
+        try:
+            # 检查是否已有会话
+            storage_state_file = self._get_storage_state_file(session_id)
+            session_exists = storage_state_file.exists()
+            
+            # 创建有头模式会话
+            result = await self.create_session(session_id, headless=False)
+            if not result['success']:
+                return result
+            
+            # 导航到登录页面
+            nav_result = await self.navigate(login_url)
+            if not nav_result['success']:
+                await self.close_session(save=False)
+                return {
+                    "success": False,
+                    "error": f"导航失败: {nav_result.get('error')}",
+                }
+            
+            # 等待用户完成登录
+            await asyncio.sleep(wait_seconds)
+            
+            # 保存会话状态
+            save_result = await self.save_session()
+            if not save_result['success']:
+                await self.close_session(save=False)
+                return {
+                    "success": False,
+                    "error": f"保存会话失败: {save_result.get('error')}",
+                }
+            
+            # 关闭浏览器
+            await self.close_session(save=False)  # 已经保存过了
+            
+            return {
+                "success": True,
+                "session_id": session_id,
+                "login_url": login_url,
+                "session_exists_before": session_exists,
+                "storage_state_file": str(storage_state_file),
+                "message": f"混合模式登录完成! 会话 '{session_id}' 已保存",
+                "next_steps": [
+                    f"后续使用: browser_create_session('{session_id}', headless=True)",
+                    "会话将自动恢复登录状态,无需重新登录"
+                ]
+            }
+            
+        except Exception as e:
+            import traceback
+            # 确保关闭浏览器
+            try:
+                await self.close_session(save=False)
+            except:
+                pass
+            
+            return {
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+            }
+    
     async def cleanup(self):
         """清理资源"""
         await self.close_session(save=True)

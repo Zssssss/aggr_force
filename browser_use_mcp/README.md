@@ -26,6 +26,12 @@
 - 凭证值不会暴露给 AI 助手
 - AI 只能通过键名引用凭证
 
+### 🎭 混合模式 - 处理人工验证
+- **有头模式** (`headless=False`): 显示浏览器窗口,人工处理 reCAPTCHA 等验证
+- **无头模式** (`headless=True`): 后台运行,自动恢复登录状态
+- **最佳实践**: 首次登录用有头模式,后续自动化用无头模式
+- 📖 详见 [混合模式使用指南](HYBRID_MODE_GUIDE.md)
+
 ### 🐧 WSL 兼容
 - 完全支持在 WSL 环境中运行
 
@@ -148,15 +154,39 @@ AI 助手通过 `browser_input_sensitive(index, credential_key)` 工具填入凭
 
 ## 使用示例
 
+### 🚀 快速开始 - 混合模式
+
+**处理需要人工验证的登录场景（推荐）**
+
+```bash
+# 运行交互式登录助手
+cd browser_use_mcp
+python3 quick_start_hybrid.py
+```
+
+这个工具会引导你完成:
+1. 首次登录 - 有头模式,人工处理 reCAPTCHA 等验证
+2. 保存会话 - 自动保存登录状态
+3. 后续使用 - 无头模式自动恢复登录状态
+
+📖 **详细说明**: 查看 [混合模式使用指南](HYBRID_MODE_GUIDE.md)
+
+---
+
 ### 基本流程
 
 ```
-1. browser_create_session(session_id="my_session")  # 创建会话
+1. browser_create_session(session_id="my_session", headless=False)  # 创建会话(有头模式)
 2. browser_navigate(url="https://example.com")       # 导航到网站
 3. browser_get_state()                               # 获取页面状态和元素列表
 4. browser_click(index=5)                            # 点击索引为 5 的元素
 5. browser_input(index=3, text="hello")              # 在索引为 3 的输入框输入
 6. browser_save_session()                            # 保存会话
+7. browser_close_session()                           # 关闭浏览器
+
+# 后续使用 - 无头模式
+1. browser_create_session(session_id="my_session", headless=True)  # 恢复会话(无头模式)
+2. browser_navigate(url="https://example.com/dashboard")  # 已登录状态
 ```
 
 ---
