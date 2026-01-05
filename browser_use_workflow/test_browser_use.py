@@ -19,11 +19,8 @@ async def test_browser():
     
     manager = BrowserUseManager()
     
-    # 检测WSL环境
-    print(f"\n1. 检测WSL环境: {manager._is_wsl()}")
-    
     # 测试创建会话
-    print("\n2. 测试创建浏览器会话...")
+    print("\n1. 测试创建浏览器会话...")
     try:
         result = await manager.create_session("test_session", headless=False)
         print(f"   结果: {result}")
@@ -35,7 +32,7 @@ async def test_browser():
         print("   ✅ 会话创建成功")
         
         # 测试导航
-        print("\n3. 测试导航到百度...")
+        print("\n2. 测试导航到百度...")
         nav_result = await manager.navigate("https://www.baidu.com")
         print(f"   结果: {nav_result}")
         
@@ -46,7 +43,7 @@ async def test_browser():
             await asyncio.sleep(2)
             
             # 测试获取状态
-            print("\n4. 测试获取页面状态...")
+            print("\n3. 测试获取页面状态...")
             state_result = await manager.get_state(include_screenshot=False)
             
             if state_result.get("success"):
@@ -60,7 +57,7 @@ async def test_browser():
             print(f"   ❌ 导航失败: {nav_result.get('error')}")
         
         # 关闭会话
-        print("\n5. 关闭会话...")
+        print("\n4. 关闭会话...")
         close_result = await manager.close_session(save=False)
         print(f"   结果: {close_result}")
         
