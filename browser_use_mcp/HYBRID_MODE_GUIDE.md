@@ -47,7 +47,9 @@
 
 ## 使用方法
 
-### 方法1: 使用Python脚本
+### 方法1: 手动编写代码打开浏览器（推荐）
+
+这是最透明、最灵活的方式，每一步操作都清晰可见：
 
 ```python
 import asyncio
@@ -56,21 +58,40 @@ from browser_tools import get_browser_manager
 async def main():
     manager = get_browser_manager()
     
-    # === 首次登录: 有头模式 ===
-    await manager.create_session(
+    # === 首次登录: 有头模式 - 手动编写每一步 ===
+    print("步骤1: 创建浏览器会话...")
+    result = await manager.create_session(
         session_id="my_session",
         headless=False  # 显示浏览器窗口
     )
+    print(f"✓ 会话创建: {result['message']}")
+    
+    print("\n步骤2: 导航到登录页...")
     await manager.navigate("https://example.com/login")
+    print("✓ 已打开登录页面")
+    
+    print("\n步骤3: 等待页面加载...")
+    await asyncio.sleep(2)
+    
+    # 可选：自动填入凭证
+    print("\n步骤4: 获取页面状态...")
+    state = await manager.get_state(include_screenshot=False)
+    print(f"✓ 页面标题: {state['title']}")
     
     # 人工完成登录...
+    print("\n请在浏览器中完成登录...")
     input("完成登录后按Enter...")
     
-    # 保存会话
+    print("\n步骤5: 保存会话...")
     await manager.save_session()
+    print("✓ 会话已保存")
+    
+    print("\n步骤6: 关闭浏览器...")
     await manager.close_session()
+    print("✓ 浏览器已关闭")
     
     # === 后续自动化: 无头模式 ===
+    print("\n\n=== 后续自动化 ===")
     await manager.create_session(
         session_id="my_session",
         headless=True  # 后台运行
@@ -84,7 +105,42 @@ async def main():
 asyncio.run(main())
 ```
 
-### 方法2: 使用MCP工具(通过AI助手)
+**优势：**
+- ✅ 每一步都清晰可见，易于理解
+- ✅ 可以在任何步骤添加调试信息
+- ✅ 灵活调整等待时间和操作顺序
+- ✅ 出问题时容易定位和修复
+
+### 方法2: 使用封装的hybrid_login方法
+
+如果你想要更简洁的代码，可以使用封装好的方法：
+
+```python
+import asyncio
+from browser_tools import get_browser_manager
+
+async def main():
+    manager = get_browser_manager()
+    
+    # 一行代码完成混合模式登录
+    result = await manager.hybrid_login(
+        session_id="my_session",
+        login_url="https://example.com/login",
+        wait_seconds=60  # 等待60秒让用户完成登录
+    )
+    
+    if result['success']:
+        print("✓ 登录完成，会话已保存")
+    
+    # 后续使用无头模式
+    await manager.create_session("my_session", headless=True)
+    await manager.navigate("https://example.com/dashboard")
+    await manager.close_session()
+
+asyncio.run(main())
+```
+
+### 方法3: 使用MCP工具(通过AI助手)
 
 #### 步骤1: 首次登录(有头模式)
 

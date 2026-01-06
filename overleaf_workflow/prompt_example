@@ -1,1 +1,1 @@
-在aggr_force/overleaf_workflow目录下完成相关任务, 使用hybrid模式：先写代码打开浏览器，导航到overleaf网站，用户名1094569708@qq.com，密码aggr_force123登陆，进行人工操作完成reCAPTCHA验证，保存session后退出；之后再采用headless模式打开浏览器导航到overleaf网站，通过保存的session进入到用户主页，然后再进入到title名为“resume-master-260105”的项目中，对resume-zh_CN.tex进行改写以完成用户的各种要求。
+在aggr_force/overleaf_workflow目录下完成相关任务, 使用hybrid模式：1.先写代码打开浏览器，导航到overleaf网站，用户名1094569708@qq.com，密码aggr_force123登陆，进行人工操作完成reCAPTCHA验证，保存session到当前文件夹下后退出；2.之后（这一步未必需要写代码）再采用headless模式打开浏览器导航到overleaf网站，通过保存的session进入到用户主页，然后再进入到title名为“resume-master-260105”的项目中，下载所有相关文件到本地当前目录。3.在本地对该项目进行基于用户目的的操作

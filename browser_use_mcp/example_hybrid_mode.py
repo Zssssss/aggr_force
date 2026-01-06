@@ -2,9 +2,11 @@
 """混合模式示例 - 先有头登录,后无头自动化
 
 这个示例展示如何处理需要人工验证(如reCAPTCHA)的登录场景:
-1. 首次使用有头模式,人工完成登录和验证
-2. 保存会话状态
+1. 首次使用有头模式,手动编写代码打开浏览器,人工完成登录和验证
+2. 手动编写代码保存会话状态
 3. 后续使用无头模式,自动恢复登录状态进行自动化操作
+
+改进版本：展示手动编写代码的方式，而不是使用封装的hybrid_login方法
 """
 
 import asyncio
@@ -12,47 +14,89 @@ from browser_tools import get_browser_manager
 
 
 async def first_time_login():
-    """首次登录 - 有头模式,人工处理验证"""
+    """首次登录 - 有头模式,手动编写代码,人工处理验证"""
     print("=" * 60)
-    print("阶段1: 首次登录 (有头模式)")
+    print("阶段1: 首次登录 (有头模式 - 手动编写代码)")
     print("=" * 60)
     
     manager = get_browser_manager()
     
-    # 创建会话 - 使用有头模式
+    # 步骤1: 手动创建会话 - 使用有头模式
+    print("\n[步骤1] 手动创建浏览器会话...")
     result = await manager.create_session(
         session_id="github_session",  # 使用有意义的会话名
         headless=False  # 关键: 显示浏览器窗口
     )
-    print(f"✓ 会话创建: {result['message']}")
     
-    # 导航到登录页面
+    if not result.get('success'):
+        print(f"❌ 创建会话失败: {result.get('error')}")
+        return
+    
+    print(f"✓ 会话创建成功")
+    print(f"  - 会话ID: {result['session_id']}")
+    print(f"  - 模式: {'无头' if result.get('headless') else '有头(显示窗口)'}")
+    
+    # 步骤2: 手动导航到登录页面
+    print("\n[步骤2] 手动导航到登录页...")
     result = await manager.navigate("https://github.com/login")
-    print(f"✓ 导航到登录页: {result['message']}")
     
+    if not result.get('success'):
+        print(f"❌ 导航失败: {result.get('error')}")
+        await manager.close_session(save=False)
+        return
+    
+    print(f"✓ 已打开登录页面")
+    print(f"  - URL: https://github.com/login")
+    
+    # 步骤3: 等待页面加载
+    print("\n[步骤3] 等待页面加载...")
+    await asyncio.sleep(2)
+    print("✓ 页面加载完成")
+    
+    # 步骤4: 可选 - 获取页面状态
+    print("\n[步骤4] 获取页面状态...")
+    state = await manager.get_state(include_screenshot=False)
+    
+    if state.get('success'):
+        print(f"✓ 页面信息:")
+        print(f"  - 标题: {state['title']}")
+        print(f"  - 可交互元素: {state['elements_count']} 个")
+    
+    # 步骤5: 等待用户手动完成登录
     print("\n" + "=" * 60)
-    print("请在浏览器窗口中完成以下操作:")
+    print("请在浏览器窗口中手动完成以下操作:")
     print("  1. 输入用户名和密码")
     print("  2. 完成 reCAPTCHA 或其他验证")
     print("  3. 点击登录按钮")
     print("  4. 等待登录成功")
     print("=" * 60)
     
-    # 等待用户完成登录
-    input("\n完成登录后,按 Enter 继续...")
+    input("\n✋ 完成登录后,按 Enter 继续...")
     
-    # 保存会话状态(包括登录cookies)
+    # 步骤6: 等待登录状态稳定
+    print("\n[步骤5] 等待登录状态稳定...")
+    await asyncio.sleep(2)
+    print("✓ 等待完成")
+    
+    # 步骤7: 手动保存会话状态
+    print("\n[步骤6] 手动保存会话状态...")
     result = await manager.save_session()
-    print(f"\n✓ 会话已保存: {result['message']}")
-    print(f"  存储位置: {result['storage_state_file']}")
     
-    # 关闭浏览器
-    await manager.close_session(save=True)
+    if result.get('success'):
+        print(f"✓ 会话已保存")
+        print(f"  - 会话ID: {result['session_id']}")
+        print(f"  - 存储位置: {result['storage_state_file']}")
+    else:
+        print(f"⚠ 保存失败: {result.get('error')}")
+    
+    # 步骤8: 手动关闭浏览器
+    print("\n[步骤7] 手动关闭浏览器...")
+    await manager.close_session(save=False)  # 已经手动保存过了
     print("✓ 浏览器已关闭")
     
     print("\n" + "=" * 60)
-    print("首次登录完成! 会话状态已保存")
-    print("后续可以使用无头模式自动恢复登录状态")
+    print("✓ 首次登录完成! 会话状态已保存")
+    print("  后续可以使用无头模式自动恢复登录状态")
     print("=" * 60)
 
 
