@@ -1,241 +1,104 @@
 #!/usr/bin/env python3
-"""
-Skill Loader - 加载和管理技能的核心模块
+"""get_skills_mcp.skill_loader
 
-支持从以下目录加载技能：
-1. skills/custom - 用户自定义技能目录
-2. vendor/anthropics-skills - Anthropic开源技能目录
+按用户给定的最小规范加载 skills：
+
+- 技能根目录：`./skills`（相对项目根目录）
+- 一个 skill = `skills/<skill_name>/SKILL.md`
+- 列表仅扫描 `skills/` 的**一级子目录**（不递归），且必须存在 `SKILL.md`
+
+同时为了兼容 vendor/anthropics-skills，本 loader 还会从：
+- `vendor/anthropics-skills/skills`
+以同样规则加载（同样只扫描一级子目录，且必须有 `SKILL.md`）。
+
+注意：不再加载 `skills/custom/*.md|*.json|*.txt` 这类 legacy 文件；避免把“文档/规范类”误当 skill。
 """
 
-import os
-import json
-from pathlib import Path
-from typing import Dict, List, Optional, Any
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
 class Skill:
-    """技能类，表示一个可执行的技能"""
-    
-    def __init__(self, name: str, description: str, instructions: str, 
-                 metadata: Optional[Dict[str, Any]] = None, 
-                 source_path: Optional[Path] = None):
-        self.name = name
-        self.description = description
-        self.instructions = instructions
-        self.metadata = metadata or {}
-        self.source_path = source_path
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """转换为字典格式"""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "instructions": self.instructions,
-            "metadata": self.metadata,
-            "source_path": str(self.source_path) if self.source_path else None
-        }
-    
-    def __repr__(self) -> str:
-        return f"Skill(name={self.name}, source={self.source_path})"
+    """只保留最小字段：name + SKILL.md 路径 + 来源。"""
+
+    name: str
+    skill_md_path: Path
+    source: str  # custom | vendor
+
+    def read_text(self) -> str:
+        return self.skill_md_path.read_text(encoding="utf-8")
 
 
 class SkillLoader:
-    """技能加载器，负责从不同目录加载技能"""
-    
+    """加载 skills/<name>/SKILL.md（以及 vendor/anthropics-skills/skills/<name>/SKILL.md）。"""
+
     def __init__(self, base_dir: Optional[Path] = None):
-        """
-        初始化技能加载器
-        
-        Args:
-            base_dir: 基础目录，默认为项目根目录
-        """
         if base_dir is None:
-            # 默认使用当前文件的父目录的父目录作为基础目录
             base_dir = Path(__file__).parent.parent
-        
+
         self.base_dir = Path(base_dir)
-        self.custom_skills_dir = self.base_dir / "skills" / "custom"
-        self.vendor_skills_dir = self.base_dir / "vendor" / "anthropics-skills"
-        
+
+        # 对齐用户示例：主 skills 根目录
+        self.custom_skills_root = self.base_dir / "skills"
+        # 兼容 vendor：只加载 vendor repo 的 skills 子目录（不碰 spec/template 等）
+        self.vendor_skills_root = self.base_dir / "vendor" / "anthropics-skills" / "skills"
+
+        self.roots: List[Tuple[str, Path]] = [
+            ("custom", self.custom_skills_root),
+            ("vendor", self.vendor_skills_root),
+        ]
+
+        # key: skill_key（通常等于目录名；冲突时 vendor_ 前缀）
         self.skills: Dict[str, Skill] = {}
-        
-        logger.info(f"SkillLoader initialized with base_dir: {self.base_dir}")
-        logger.info(f"Custom skills directory: {self.custom_skills_dir}")
-        logger.info(f"Vendor skills directory: {self.vendor_skills_dir}")
-    
+
     def load_all_skills(self) -> Dict[str, Skill]:
-        """
-        加载所有技能
-        
-        Returns:
-            技能字典，key为技能名称，value为Skill对象
-        """
         self.skills.clear()
-        
-        # 加载自定义技能
-        if self.custom_skills_dir.exists():
-            logger.info(f"Loading custom skills from: {self.custom_skills_dir}")
-            self._load_skills_from_directory(self.custom_skills_dir, source="custom")
-        else:
-            logger.warning(f"Custom skills directory not found: {self.custom_skills_dir}")
-        
-        # 加载vendor技能
-        if self.vendor_skills_dir.exists():
-            logger.info(f"Loading vendor skills from: {self.vendor_skills_dir}")
-            self._load_skills_from_directory(self.vendor_skills_dir, source="vendor")
-        else:
-            logger.warning(f"Vendor skills directory not found: {self.vendor_skills_dir}")
-        
-        logger.info(f"Total skills loaded: {len(self.skills)}")
+
+        for source, root in self.roots:
+            if not root.exists():
+                logger.info("Skills root not found: %s", root)
+                continue
+
+            for d in root.iterdir():
+                if not d.is_dir():
+                    continue
+                skill_md = d / "SKILL.md"
+                if not skill_md.is_file():
+                    continue
+
+                name = d.name
+                key = name
+
+                # 冲突策略：custom 优先，vendor 加前缀
+                if key in self.skills and source == "vendor":
+                    key = f"vendor_{name}"
+
+                # 极端情况：仍冲突则追加序号
+                if key in self.skills:
+                    i = 2
+                    while f"{key}_{i}" in self.skills:
+                        i += 1
+                    key = f"{key}_{i}"
+
+                self.skills[key] = Skill(name=name, skill_md_path=skill_md, source=source)
+
         return self.skills
-    
-    def _load_skills_from_directory(self, directory: Path, source: str = "unknown"):
-        """
-        从指定目录加载技能
-        
-        Args:
-            directory: 技能目录
-            source: 技能来源标识
-        """
-        if not directory.exists():
-            logger.warning(f"Directory does not exist: {directory}")
-            return
-        
-        # 遍历目录中的所有文件
-        for item in directory.rglob("*"):
-            if item.is_file():
-                # 支持多种格式
-                if item.suffix.lower() in ['.md', '.txt', '.json']:
-                    try:
-                        skill = self._load_skill_from_file(item, source)
-                        if skill:
-                            # 如果技能名称已存在，添加来源前缀避免冲突
-                            skill_key = skill.name
-                            if skill_key in self.skills:
-                                skill_key = f"{source}_{skill.name}"
-                                logger.warning(f"Skill name conflict, renamed to: {skill_key}")
-                            
-                            self.skills[skill_key] = skill
-                            logger.info(f"Loaded skill: {skill_key} from {item}")
-                    except Exception as e:
-                        logger.error(f"Failed to load skill from {item}: {e}")
-    
-    def _load_skill_from_file(self, file_path: Path, source: str) -> Optional[Skill]:
-        """
-        从文件加载单个技能
-        
-        Args:
-            file_path: 技能文件路径
-            source: 技能来源
-            
-        Returns:
-            Skill对象或None
-        """
-        try:
-            if file_path.suffix.lower() == '.json':
-                return self._load_skill_from_json(file_path, source)
-            elif file_path.suffix.lower() in ['.md', '.txt']:
-                return self._load_skill_from_markdown(file_path, source)
-        except Exception as e:
-            logger.error(f"Error loading skill from {file_path}: {e}")
-            return None
-    
-    def _load_skill_from_json(self, file_path: Path, source: str) -> Optional[Skill]:
-        """从JSON文件加载技能"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        name = data.get('name', file_path.stem)
-        description = data.get('description', '')
-        instructions = data.get('instructions', '')
-        metadata = data.get('metadata', {})
-        metadata['source'] = source
-        
-        return Skill(
-            name=name,
-            description=description,
-            instructions=instructions,
-            metadata=metadata,
-            source_path=file_path
-        )
-    
-    def _load_skill_from_markdown(self, file_path: Path, source: str) -> Optional[Skill]:
-        """从Markdown文件加载技能"""
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # 简单解析：使用文件名作为技能名称，内容作为说明和指令
-        name = file_path.stem
-        
-        # 尝试从内容中提取标题和描述
-        lines = content.strip().split('\n')
-        description = ""
-        instructions = content
-        
-        # 如果第一行是标题（以#开头），使用它作为描述
-        if lines and lines[0].startswith('#'):
-            description = lines[0].lstrip('#').strip()
-            instructions = '\n'.join(lines[1:]).strip()
-        
-        metadata = {
-            'source': source,
-            'format': 'markdown'
-        }
-        
-        return Skill(
-            name=name,
-            description=description or f"Skill from {file_path.name}",
-            instructions=instructions,
-            metadata=metadata,
-            source_path=file_path
-        )
-    
-    def get_skill(self, name: str) -> Optional[Skill]:
-        """
-        获取指定名称的技能
-        
-        Args:
-            name: 技能名称
-            
-        Returns:
-            Skill对象或None
-        """
-        return self.skills.get(name)
-    
-    def list_skills(self) -> List[str]:
-        """
-        列出所有技能名称
-        
-        Returns:
-            技能名称列表
-        """
-        return list(self.skills.keys())
-    
-    def get_skills_by_source(self, source: str) -> Dict[str, Skill]:
-        """
-        获取指定来源的所有技能
-        
-        Args:
-            source: 技能来源（custom或vendor）
-            
-        Returns:
-            技能字典
-        """
-        return {
-            name: skill 
-            for name, skill in self.skills.items() 
-            if skill.metadata.get('source') == source
-        }
-    
+
     def reload_skills(self) -> Dict[str, Skill]:
-        """
-        重新加载所有技能
-        
-        Returns:
-            技能字典
-        """
-        logger.info("Reloading all skills...")
         return self.load_all_skills()
+
+    def list_skills(self) -> List[str]:
+        return sorted(self.skills.keys())
+
+    def get_skill(self, name: str) -> Optional[Skill]:
+        return self.skills.get(name)
+
+    def get_skills_by_source(self, source: str) -> Dict[str, Skill]:
+        return {k: v for k, v in self.skills.items() if v.source == source}

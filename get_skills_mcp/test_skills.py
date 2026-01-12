@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""
-测试 Get Skills MCP Server 的功能
+"""get_skills_mcp.test_skills
+
+回归测试：确保仅按目录扫描并且只读取每个 skill 的 SKILL.md。
+
+规则（与服务端一致）：
+- custom: ./skills/<skill_name>/SKILL.md
+- vendor: ./vendor/anthropics-skills/skills/<skill_name>/SKILL.md
+- 仅扫描一级子目录，不递归
+- 不再把 *.md/*.json/*.txt 文件当 skill
 """
 
 import sys
@@ -12,106 +19,49 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from get_skills_mcp.skill_loader import SkillLoader
 
 
-def test_skill_loader():
-    """测试技能加载器"""
-    print("=" * 60)
-    print("测试 Skill Loader")
-    print("=" * 60)
-    
-    # 创建加载器
+def test_skill_loader() -> None:
     loader = SkillLoader()
-    print(f"\n✓ 创建 SkillLoader 实例")
-    print(f"  - 基础目录: {loader.base_dir}")
-    print(f"  - 自定义技能目录: {loader.custom_skills_dir}")
-    print(f"  - Vendor技能目录: {loader.vendor_skills_dir}")
-    
-    # 加载所有技能
-    print(f"\n正在加载技能...")
+
+    print("=" * 60)
+    print("测试 SkillLoader（仅 SKILL.md）")
+    print("=" * 60)
+    print(f"base_dir={loader.base_dir}")
+    print(f"custom_root={loader.custom_skills_root}")
+    print(f"vendor_root={loader.vendor_skills_root}")
+
     skills = loader.load_all_skills()
-    print(f"\n✓ 加载完成，共 {len(skills)} 个技能")
-    
-    # 按来源分组
-    custom_skills = loader.get_skills_by_source('custom')
-    vendor_skills = loader.get_skills_by_source('vendor')
-    
-    print(f"\n技能统计:")
-    print(f"  - 自定义技能: {len(custom_skills)} 个")
-    print(f"  - Vendor技能: {len(vendor_skills)} 个")
-    
-    # 列出所有技能
+    print(f"loaded={len(skills)}")
+
+    # 基本断言：所有 skill 都应有 SKILL.md
+    for key, skill in skills.items():
+        assert skill.skill_md_path.name == "SKILL.md", f"{key} not SKILL.md"
+        assert skill.skill_md_path.is_file(), f"{key} SKILL.md not exists"
+
+    # smoke：读第一条
     if skills:
-        print(f"\n技能列表:")
-        for name, skill in skills.items():
-            source = skill.metadata.get('source', 'unknown')
-            print(f"  [{source}] {name}")
-            print(f"      描述: {skill.description[:50]}..." if len(skill.description) > 50 else f"      描述: {skill.description}")
-    
-    # 测试获取单个技能
-    if skills:
-        first_skill_name = list(skills.keys())[0]
-        print(f"\n测试获取技能: {first_skill_name}")
-        skill = loader.get_skill(first_skill_name)
-        if skill:
-            print(f"  ✓ 成功获取技能")
-            print(f"    - 名称: {skill.name}")
-            print(f"    - 描述: {skill.description}")
-            print(f"    - 指令长度: {len(skill.instructions)} 字符")
-            print(f"    - 来源: {skill.metadata.get('source')}")
-    
-    print("\n" + "=" * 60)
-    print("测试完成")
-    print("=" * 60)
+        first_key = sorted(skills.keys())[0]
+        s = loader.get_skill(first_key)
+        assert s is not None
+        text = s.read_text()
+        assert isinstance(text, str) and len(text) > 0
+        print(f"smoke_read={first_key} chars={len(text)} source={s.source}")
+
+    # 来源统计
+    custom = loader.get_skills_by_source("custom")
+    vendor = loader.get_skills_by_source("vendor")
+    print(f"custom={len(custom)} vendor={len(vendor)} total={len(skills)}")
 
 
-def test_skill_formats():
-    """测试不同格式的技能文件"""
-    print("\n" + "=" * 60)
-    print("测试技能文件格式")
-    print("=" * 60)
-    
-    from get_skills_mcp.skill_loader import Skill
-    
-    # 测试 Skill 对象
-    skill = Skill(
-        name="test_skill",
-        description="这是一个测试技能",
-        instructions="执行测试指令",
-        metadata={"source": "test", "version": "1.0.0"}
-    )
-    
-    print(f"\n✓ 创建 Skill 对象")
-    print(f"  - 名称: {skill.name}")
-    print(f"  - 描述: {skill.description}")
-    print(f"  - 指令: {skill.instructions}")
-    
-    # 转换为字典
-    skill_dict = skill.to_dict()
-    print(f"\n✓ 转换为字典:")
-    for key, value in skill_dict.items():
-        if key != 'instructions':
-            print(f"  - {key}: {value}")
-    
-    print("\n" + "=" * 60)
-
-
-def main():
-    """主函数"""
-    print("\n🚀 Get Skills MCP Server - 功能测试\n")
-    
+def main() -> None:
     try:
-        # 测试技能加载器
         test_skill_loader()
-        
-        # 测试技能格式
-        test_skill_formats()
-        
-        print("\n✅ 所有测试通过！")
-        
+        print("\n✅ 测试通过")
     except Exception as e:
         print(f"\n❌ 测试失败: {e}")
         import traceback
+
         traceback.print_exc()
-        sys.exit(1)
+        raise
 
 
 if __name__ == "__main__":
