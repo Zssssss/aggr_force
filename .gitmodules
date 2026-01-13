@@ -1,3 +1,12 @@
 [submodule "vendor/anthropics-skills"]
 	path = vendor/anthropics-skills
 	url = https://github.com/anthropics/skills.git
+[submodule "skills/vendors/planning-with-files"]
+	path = skills/vendors/planning-with-files
+	url = https://github.com/OthmanAdi/planning-with-files.git
+[submodule "vendors/planning-with-files"]
+	path = vendors/planning-with-files
+	url = https://github.com/OthmanAdi/planning-with-files.git
+[submodule "vendor/planning-with-files"]
+	path = vendor/planning-with-files
+	url = https://github.com/OthmanAdi/planning-with-files.git
